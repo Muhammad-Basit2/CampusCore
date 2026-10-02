@@ -1,0 +1,335 @@
+/* ==========================================================================
+   CampusCore - PRINT ENGINE
+   --------------------------------------------------------------------------
+   Three independent print modes share one stylesheet:
+
+     [data-print="invoice"]  -> A4 / Letter full-page tax invoice
+     [data-print="thermal"]  -> compact 58 mm POS receipt (Courier New)
+     [data-print="report"]   -> A4 report card
+
+   Every non-printable part of the application (sidebar, topbar, forms,
+   buttons, action columns, preview chrome) is explicitly hidden inside
+   @media print so the output is always clean.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------
+   SCREEN PREVIEW STYLES - make the documents look like paper on screen.
+   ------------------------------------------------------------------ */
+.doc-stage {
+  background: #0a0f1c; padding: 20px; border-radius: 12px;
+  border: 1px solid var(--line); overflow: auto; display: flex; justify-content: center;
+}
+.paper {
+  background: #fff; color: #111; width: 210mm; min-height: 297mm;
+  padding: 10mm 12mm 12mm; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  font-family: "Segoe UI", Arial, sans-serif; font-size: 11px;
+}
+.paper.thermal {
+  width: 58mm; min-height: 0; padding: 4mm 3mm;
+  font-family: "Courier New", Courier, monospace; font-size: 10.5px;
+  line-height: 1.35;
+}
+
+/* ======================== SHARED DOCUMENT BITS ======================= */
+.doc-school-head {
+  display: flex; align-items: center; gap: 14px;
+  border-bottom: 3px solid #1d4ed8; padding-bottom: 10px; margin-bottom: 14px;
+}
+.doc-school-head .logo { width: 68px; height: 68px; object-fit: contain; flex: 0 0 auto; }
+.doc-school-head .who { flex: 1; min-width: 0; }
+.doc-school-head .name {
+  font-size: 20px; font-weight: 800; color: #1e3a8a; margin: 0 0 2px;
+  text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.2;
+}
+.doc-school-head .tagline { font-size: 12px; color: #475569; font-style: italic; }
+.doc-school-head .contact { font-size: 11px; color: #475569; margin-top: 4px; line-height: 1.5; }
+.doc-title-band {
+  display: flex; justify-content: space-between; align-items: center;
+  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+  padding: 8px 14px; margin-bottom: 14px;
+}
+.doc-title-band h2 { margin: 0; font-size: 16px; color: #1e3a8a; letter-spacing: 1px; }
+.doc-title-band .no { font-family: "Consolas", monospace; font-size: 13px; color: #1d4ed8; font-weight: 700; }
+
+.doc-parties { display: flex; gap: 16px; margin-bottom: 14px; }
+.doc-parties .box {
+  flex: 1; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; background: #f8fafc;
+}
+.doc-parties .box h4 {
+  margin: 0 0 7px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 1px; color: #64748b;
+}
+.doc-parties .row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; padding: 2px 0; }
+.doc-parties .row .k { color: #64748b; }
+.doc-parties .row .v { font-weight: 600; text-align: right; }
+
+table.doc-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 11px; }
+table.doc-table th {
+  background: #1e3a8a; color: #fff; padding: 5px 6px; text-align: left;
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid #1e3a8a;
+}
+table.doc-table td { padding: 4px 6px; border: 1px solid #cbd5e1; }
+table.doc-table tbody tr:nth-child(even) td { background: #f8fafc; }
+table.doc-table td.num, table.doc-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.doc-table tfoot td { background: #eff6ff; font-weight: 700; }
+
+.doc-sub {
+  margin: 0 0 8px; font-size: 12px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.6px; color: #1e3a8a;
+  border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;
+}
+
+.doc-totals { display: flex; justify-content: flex-end; margin-bottom: 14px; }
+.doc-totals .inner { min-width: 290px; }
+.doc-totals .row {
+  display: flex; justify-content: space-between; gap: 20px;
+  padding: 6px 10px; font-size: 12.5px; border-bottom: 1px solid #e2e8f0;
+}
+.doc-totals .row.grand {
+  background: #1e3a8a; color: #fff; font-weight: 800; font-size: 14.5px;
+  border: none; margin-top: 4px; border-radius: 6px; padding: 10px;
+}
+.status-stamp {
+  display: inline-block; padding: 4px 14px; border-radius: 6px;
+  font-weight: 800; letter-spacing: 1px; font-size: 12px; border: 2px solid;
+}
+.status-stamp.Paid { color: #15803d; border-color: #16a34a; background: #dcfce7; }
+.status-stamp.Partial { color: #b45309; border-color: #f59e0b; background: #fef3c7; }
+.status-stamp.Unpaid { color: #b91c1c; border-color: #dc2626; background: #fee2e2; }
+
+.doc-signs { display: flex; justify-content: space-between; gap: 30px; margin-top: 40px; }
+.doc-signs .sign { flex: 1; text-align: center; }
+.doc-signs .line { border-top: 1.5px solid #475569; padding-top: 6px; font-size: 11.5px; color: #475569; }
+.doc-foot-note {
+  margin-top: 16px; text-align: center; font-size: 11px; color: #64748b;
+  border-top: 1px dashed #cbd5e1; padding-top: 8px; font-style: italic;
+}
+.doc-meta-line { font-size: 11px; color: #64748b; margin-top: 4px; }
+
+/* ========================= THERMAL 58mm ============================== */
+.paper.thermal .t-center { text-align: center; }
+.paper.thermal .t-head { border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 6px; }
+.paper.thermal .t-logo {
+  max-width: 34mm; max-height: 12mm; object-fit: contain;
+  display: block; margin: 0 auto 3px;
+}
+.paper.thermal .t-school {
+  font-size: 13px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.5px; line-height: 1.15; word-break: break-word;
+}
+.paper.thermal .t-sub { font-size: 9.5px; line-height: 1.35; }
+.paper.thermal .t-rule { border-top: 1px dashed #000; margin: 5px 0; }
+.paper.thermal .t-row { display: flex; justify-content: space-between; gap: 4px; font-size: 10.5px; }
+.paper.thermal .t-row .k { flex: 0 0 auto; }
+.paper.thermal .t-row .v { flex: 1 1 auto; text-align: right; word-break: break-word; }
+.paper.thermal .t-total {
+  display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 700;
+  border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 5px 0; margin: 5px 0;
+}
+.paper.thermal .t-foot { font-size: 9px; text-align: center; line-height: 1.3; margin-top: 4px; }
+.paper.thermal .t-big { font-size: 14px; font-weight: 700; letter-spacing: 1px; }
+
+/* ============================ REPORT CARD =========================== */
+.report-head { display: flex; align-items: center; gap: 10px; border-bottom: 2px solid #0f766e; padding-bottom: 6px; margin-bottom: 6px; }
+.report-head .logo { width: 48px; height: 48px; object-fit: contain; }
+.report-head .name { font-size: 16px; font-weight: 800; color: #0f766e; text-transform: uppercase; margin: 0; line-height: 1.2; }
+.report-head .tagline { font-size: 10px; color: #475569; font-style: italic; }
+.report-heading { text-align: center; margin: 6px 0 8px; }
+.report-heading h2 {
+  margin: 0; font-size: 13px; letter-spacing: 1.5px; color: #0f172a;
+  text-transform: uppercase; border-bottom: 1px solid #0f766e;
+  display: inline-block; padding-bottom: 2px;
+}
+.report-heading .year { font-size: 10px; color: #475569; margin-top: 2px; }
+.report-info {
+  display: flex; flex-wrap: wrap; gap: 4px 16px;
+  border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 10px;
+  margin-bottom: 8px; background: #f8fafc; font-size: 11px;
+}
+.report-info .kv { display: flex; gap: 4px; }
+.report-info .k { color: #64748b; }
+.report-info .v { font-weight: 600; }
+.grade-pill { font-weight: 800; padding: 1px 8px; border-radius: 999px; display: inline-block; font-size: 10px; }
+.grade-pill.Aplus, .grade-pill.A { background: #dcfce7; color: #15803d; }
+.grade-pill.B { background: #fef3c7; color: #b45309; }
+.grade-pill.C { background: #e0f2fe; color: #0369a1; }
+.grade-pill.D { background: #e2e8f0; color: #475569; }
+.grade-pill.Fail { background: #fee2e2; color: #b91c1c; }
+.report-summary {
+  display: flex; gap: 6px; margin-bottom: 8px;
+}
+.report-summary .cell {
+  flex: 1; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 6px;
+  text-align: center; background: #f8fafc;
+}
+.report-summary .cell .l { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.6px; color: #64748b; }
+.report-summary .cell .v { font-size: 13px; font-weight: 800; color: #0f172a; margin-top: 1px; }
+.remark-box {
+  border: 1px solid #cbd5e1; border-left: 3px solid #0f766e; border-radius: 6px;
+  padding: 5px 10px; background: #f0fdfa; margin-bottom: 8px; font-size: 11px;
+}
+.remark-box .l { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.8px; color: #0f766e; font-weight: 700; }
+.remark-box .t { font-size: 11px; margin-top: 1px; color: #1f2937; font-style: italic; }
+.grade-legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 8.5px; color: #64748b; }
+
+
+/* ######################################################################
+   PRINT MEDIA
+   ######################################################################
+   Strategy: the document to print is rendered into #printRoot and given a
+   data-print attribute. Everything in the app shell is hidden, so no
+   button, sidebar, form or navigation panel can ever reach the paper.
+   ###################################################################### */
+
+#printRoot { display: none; }
+
+@media print {
+  /* --- 1. Kill every piece of application chrome ------------------- */
+  html, body {
+    background: #fff !important;
+    height: auto !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .sidebar,
+  .topbar,
+  .modal-backdrop,
+  .toast-stack,
+  .btn,
+  .btn-row,
+  .no-print,
+  .card-head .btn,
+  .tabs,
+  .doc-stage__bar,
+  .preview-toolbar,
+  .search-row,
+  td.actions,
+  th.actions,
+  .view:not(.printing) {
+    display: none !important;
+  }
+
+  /* The whole view area collapses - only #printRoot survives. */
+  .app { display: none !important; }
+
+  /* --- 2. Reveal only the staged document -------------------------- */
+  #printRoot {
+    display: block !important;
+    position: static !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Preview wrappers must not double up as page boxes. */
+  #printRoot .doc-stage,
+  #printRoot .print-preview-wrap {
+    background: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+    border-radius: 0 !important;
+  }
+
+  /* --- 3. The paper itself ----------------------------------------- */
+  #printRoot .paper {
+    box-shadow: none !important;
+    margin: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* --- 4. Pagination & page geometry -------------------------------- */
+  table.doc-table { page-break-inside: auto; }
+  table.doc-table tr { page-break-inside: avoid; page-break-after: auto; }
+  /* Only the header row repeats on a continued table. The TOTAL row must stay
+     an ordinary row group: as a table-footer-group Chromium reserves a footer
+     slot on every page, which pushed the whole (single-page) report card onto
+     a second, near-empty sheet. */
+  table.doc-table thead { display: table-header-group; }
+  table.doc-table tfoot { display: table-row-group; }
+  .doc-school-head, .report-heading, .report-summary, .remark-box {
+    page-break-inside: avoid;
+  }
+
+  a[href]::after { content: none !important; }
+}
+
+/* ==========================================================================
+   PAGE GEOMETRY
+   --------------------------------------------------------------------------
+   Three named page contexts. CSS cannot select @page by an ancestor attribute,
+   so each document element is assigned its page name via `page:` and the
+   matching named @page rule supplies the size.
+
+     A4   -> page: sheet    (invoices AND report cards)
+     58mm -> page: receipt  (thermal receipts only)
+
+   A bare `@page { size: 58mm }` is deliberately NOT used: it would apply to
+   every print job and shrink A4 invoices down to receipt width.
+   ========================================================================== */
+
+/* Default / A4 context - used by invoice and report modes. */
+@page {
+  size: A4 portrait;
+  margin: 12mm 12mm 14mm;
+}
+
+/* Named context so a thermal print can override the size safely. */
+@page receipt {
+  size: 58mm auto;
+  margin: 3mm 2mm;
+}
+
+#printRoot[data-print="invoice"] .paper,
+#printRoot[data-print="report"] .paper {
+  page: sheet;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+}
+
+/* ---------------------------- THERMAL 58mm ---------------------------- */
+#printRoot[data-print="thermal"] .paper {
+  page: receipt;
+  width: 54mm;
+  min-height: 0;
+  padding: 0;
+  font-family: "Courier New", Courier, monospace !important;
+  font-size: 10pt;
+  line-height: 1.35;
+}
+
+#printRoot[data-print="thermal"] .t-logo { max-width: 30mm; max-height: 11mm; }
+#printRoot[data-print="thermal"] .t-school { font-size: 12pt; }
+#printRoot[data-print="thermal"] .t-sub { font-size: 8.5pt; }
+#printRoot[data-print="thermal"] .t-row { font-size: 9.5pt; }
+#printRoot[data-print="thermal"] .t-total { font-size: 11pt; }
+#printRoot[data-print="thermal"] .t-big { font-size: 13pt; }
+#printRoot[data-print="thermal"] .t-foot { font-size: 8pt; }
+
+@media print {
+  /* Only the receipt context is clamped to the paper width. A4 documents keep
+     the natural page box so they are never squeezed. */
+  #printRoot[data-print="thermal"] .paper {
+    max-width: 58mm !important;
+    page-break-inside: auto;
+  }
+}
+
+/* ------------------------------ REPORT CARD --------------------------- */
+/* One report card per sheet; consecutive cards never share a page.
+
+   This rule alone is what separates cards in a multi-card job - printAll()
+   joins the cards directly and relies on this. Do not also emit a .page-break
+   element between cards: the break would fire twice and insert a blank sheet
+   between every pair of cards. */
+#printRoot[data-print="report"] .paper + .paper { page-break-before: always; }
+#printRoot[data-print="report"] .report-summary { page-break-inside: avoid; }
+
+/* A card is sized to its content, never stretched, so it always fits one
+   sheet. min-height:0 (set for print above) is what guarantees this. */
+
+

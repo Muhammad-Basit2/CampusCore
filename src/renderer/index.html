@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <title>CampusCore - School Management &amp; Invoicing</title>
+    <link rel="stylesheet" href="styles/main.css" />
+    <link rel="stylesheet" href="styles/print.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <!-- ============================ SIDEBAR ============================ -->
+      <aside class="sidebar no-print" id="sidebar">
+        <div class="brand">
+          <img class="brand-logo" id="brandLogo" alt="School logo" />
+          <div class="brand-text">
+            <h1 id="brandName">CampusCore</h1>
+            <span>School ERP</span>
+          </div>
+        </div>
+
+        <nav class="nav" id="nav" role="tablist" aria-label="Main navigation">
+          <button class="nav-item active" data-view="dashboard" role="tab" aria-selected="true">
+            <span class="nav-ico">&#9632;</span>
+            <span class="nav-label">Dashboard</span>
+            <kbd>Ctrl+D</kbd>
+          </button>
+          <button class="nav-item" data-view="students" role="tab" aria-selected="false">
+            <span class="nav-ico">&#9651;</span>
+            <span class="nav-label">Students</span>
+            <kbd>Ctrl+S</kbd>
+          </button>
+          <button class="nav-item" data-view="fees" role="tab" aria-selected="false">
+            <span class="nav-ico">&#128176;</span>
+            <span class="nav-label">Fee &amp; Invoicing</span>
+            <kbd>Ctrl+I</kbd>
+          </button>
+          <button class="nav-item" data-view="grades" role="tab" aria-selected="false">
+            <span class="nav-ico">&#9733;</span>
+            <span class="nav-label">Grades &amp; Reports</span>
+            <kbd>Ctrl+R</kbd>
+          </button>
+          <button class="nav-item" data-view="settings" role="tab" aria-selected="false">
+            <span class="nav-ico">&#9881;</span>
+            <span class="nav-label">Settings</span>
+            <kbd>Ctrl+G</kbd>
+          </button>
+        </nav>
+
+        <div class="sidebar-foot">
+          <div class="kbd-hint">
+            <div><kbd>&#8593;</kbd><kbd>&#8595;</kbd> navigate &middot; <kbd>Enter</kbd> open</div>
+          </div>
+          <div class="db-path" id="dbPath" title="Database location"></div>
+        </div>
+      </aside>
+
+      <!-- ============================ MAIN ============================ -->
+      <main class="main">
+        <header class="topbar no-print">
+          <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">&#9776;</button>
+          <div class="topbar-title">
+            <h2 id="viewTitle">Dashboard</h2>
+            <p id="viewSubtitle">Overview of your school</p>
+          </div>
+          <div class="topbar-right">
+            <span class="pill" id="schoolPill">-</span>
+            <span class="pill muted" id="termPill">-</span>
+          </div>
+        </header>
+
+        <div class="views" id="views">
+          <section class="view active" id="view-dashboard" data-view="dashboard"></section>
+          <section class="view" id="view-students" data-view="students"></section>
+          <section class="view" id="view-fees" data-view="fees"></section>
+          <section class="view" id="view-grades" data-view="grades"></section>
+          <section class="view" id="view-settings" data-view="settings"></section>
+        </div>
+      </main>
+    </div>
+
+    <!-- ======================= PRINT STAGING AREA ======================= -->
+    <!--
+      The invoice / thermal receipt / report card markup is rendered here and
+      moved into place before printing. The live preview is also shown inside
+      the relevant view via cloning.
+    -->
+    <div id="printRoot" class="print-root no-print"></div>
+
+    <div class="toast-stack no-print" id="toastStack" aria-live="polite"></div>
+    <div class="modal-backdrop no-print" id="modalBackdrop" hidden></div>
+
+    <script src="js/ui.js"></script>
+    <script src="js/nav.js"></script>
+    <script src="js/settings.js"></script>
+    <script src="js/dashboard.js"></script>
+    <script src="js/students.js"></script>
+    <script src="js/fees.js"></script>
+    <script src="js/grades.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

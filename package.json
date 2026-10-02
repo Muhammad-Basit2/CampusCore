@@ -1,0 +1,83 @@
+{
+  "name": "campuscore",
+  "productName": "CampusCore",
+  "version": "1.0.1",
+  "description": "CampusCore - Offline-first School Management & Invoicing ERP (Electron + SQLite)",
+  "main": "src/main/main.js",
+  "author": "CampusCore <support@campuscore.local>",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "electron smoke-test.js",
+    "test:print": "electron tools/print-page-test.js",
+    "icon": "node -e \"const fs=require('fs'),sharp=require('sharp'),icojs=require('icojs'); sharp(fs.readFileSync('build/icon.png')).resize(256,256).toBuffer().then(b=>icojs.encodeIco([b]).then(d=>{const buf=Buffer.isBuffer(d)?d:Buffer.from(d); fs.writeFileSync('build/icon.ico',buf); console.log('ICO created:',buf.length,'bytes')}))\"",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "dependencies": {
+    "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "electron": "^32.2.7",
+    "electron-builder": "^25.1.8",
+    "icojs": "^1.0.1",
+    "sharp": "^0.35.5"
+  },
+  "build": {
+    "appId": "com.campuscore.erp",
+    "productName": "CampusCore",
+    "copyright": "Copyright © 2026 CampusCore",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!**/*.map",
+      "!**/node_modules/*/{test,example,examples,docs,doc}/**"
+    ],
+    "extraMetadata": {
+      "main": "src/main/main.js"
+    },
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
+    "asar": true,
+    "compression": "maximum",
+    "removePackageScripts": true,
+    "electronLanguages": [
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "legalTrademarks": "CampusCore"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CampusCore",
+      "menuCategory": false,
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
+    }
+  }
+}
