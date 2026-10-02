@@ -41,6 +41,14 @@ const Nav = {
     });
     on($('#nav'), 'click', '.nav-cat', (e, btn) => this.toggleGroup(btn));
     on($('#nav'), 'click', '.nav-class', (e, btn) => this.selectClass(btn));
+    // Editing a class from the tree is the only reachable route to a class's
+    // settings: there is no Classes & Subjects view wired into the router, so
+    // the tree is where a class can be renamed, re-ordered or re-categorised.
+    on($('#nav'), 'click', '.nav-class-edit', (e, btn) => {
+      e.stopPropagation();
+      const cls = this.classOf(btn.dataset.classId);
+      if (cls) this.editClass(cls);
+    });
     // "Grades & Reports" in the breadcrumb drops back to the un-scoped landing
     // page and re-opens the tree, so the crumb is the way out of a class.
     $('#crumbs').addEventListener('click', (e) => {
@@ -122,11 +130,15 @@ const Nav = {
             ${group.classes
               .map(
                 (c) => `
-              <button class="nav-class" data-class-id="${c.id}" data-cat="${esc(group.key)}"
-                      title="${esc(group.label)} &middot; ${esc(c.name)}">
-                <span class="nav-dot" aria-hidden="true"></span>
-                <span class="nav-label">${esc(c.name)}</span>
-              </button>`,
+              <div class="nav-class-row">
+                <button class="nav-class" data-class-id="${c.id}" data-cat="${esc(group.key)}"
+                        title="${esc(group.label)} &middot; ${esc(c.name)}">
+                  <span class="nav-dot" aria-hidden="true"></span>
+                  <span class="nav-label">${esc(c.name)}</span>
+                </button>
+                <button class="nav-class-edit" data-class-id="${c.id}"
+                        title="Edit ${esc(c.name)}" aria-label="Edit ${esc(c.name)}">&#9881;</button>
+              </div>`,
               )
               .join('')}
           </div>
@@ -168,6 +180,147 @@ const Nav = {
       categoryKey: this.grades.categoryKey,
       classId: this.grades.classId,
     });
+  },
+
+  /**
+   * Edits one class: its name, its position in the roll and its category.
+   *
+   * The category select is the point of this dialog. A class with no manual
+   * assignment is banded by its gradeOrder; choosing a band here overrides that
+   * for this class only, which is what lets a school file "Senior 11-12" under
+   * Intermediate without editing anyone else's sort order.
+   */
+  editClass(cls) {
+    const current = String(cls.categoryKey || '').trim();
+
+    openModal((close) =>
+      el('div', { class: 'modal narrow' }, [
+        el('div', { class: 'modal-head' }, [
+          el('h3', { text: 'Edit class' }),
+        ]),
+        el('div', { class: 'modal-body' }, [
+          el('div', { class: 'form-grid' }, [
+            el('div', { class: 'field full' }, [
+              el('label', { for: 'nc_name', text: 'Class name' }),
+              el('input', { id: 'nc_name', value: cls.name, maxlength: '120' }),
+              el('span', {
+                class: 'hint',
+                text: 'Renaming updates every student, invoice and mark in this class.',
+              }),
+            ]),
+            el('div', { class: 'field' }, [
+              el('label', { for: 'nc_order', text: 'Sort order' }),
+              el('input', {
+                id: 'nc_order',
+                type: 'number',
+                min: '0',
+                value: String(cls.gradeOrder),
+              }),
+              el('span', { class: 'hint', text: 'Lower numbers sort first.' }),
+            ]),
+            el('div', { class: 'field full' }, [
+              el('label', { for: 'nc_category', text: 'Category' }),
+              el('select', { id: 'nc_category' }, [
+                // '' is "Automatic": fall back to the band the sort order implies,
+                // which is what every class has done until it is assigned here.
+                el('option', {
+                  value: '',
+                  text: 'Automatic (from sort order)',
+                  selected: !current,
+                }),
+                ...CLASS_CATEGORIES.map((cat) =>
+                  el('option', {
+                    value: cat.key,
+                    text: cat.label,
+                    selected: current === cat.key,
+                  })),
+              ]),
+              el('span', {
+                class: 'hint',
+                text: 'Groups this class in the sidebar and the subject picker. '
+                  + 'Automatic uses the sort order to decide the band.',
+              }),
+            ]),
+          ]),
+        ]),
+        el('div', { class: 'modal-foot' }, [
+          el('button', { class: 'btn ghost', text: 'Cancel', onClick: close }),
+          el('button', {
+            class: 'btn primary',
+            text: 'Save changes',
+            onClick: (e) => withBusy(e.currentTarget, async () => {
+              if (await this.saveClass(cls)) {
+                close();
+                // The tree groups by category, so a rename, a re-order or a
+                // re-categorise all invalidate the markup that was just saved.
+                await this.buildTree();
+              }
+            }),
+          }),
+        ]),
+      ]),
+    );
+
+    const nameField = $('#nc_name');
+    if (nameField) nameField.focus();
+  },
+
+  /** Saves a class edit. Returns false (and reports why) when nothing was saved. */
+  async saveClass(cls) {
+    const nameInput = $('#nc_name');
+    const orderInput = $('#nc_order');
+    const categoryInput = $('#nc_category');
+
+    const name = nameInput ? nameInput.value.trim() : '';
+    if (!name) {
+      notify.warn('Class name required', 'Please enter a name for the class.');
+      if (nameInput) nameInput.focus();
+      return false;
+    }
+
+    const orderRaw = orderInput ? orderInput.value.trim() : '0';
+    const order = orderRaw === '' ? 0 : Number(orderRaw);
+    if (!Number.isFinite(order) || order < 0) {
+      notify.warn('Invalid sort order', 'Sort order must be a number of 0 or more.');
+      if (orderInput) orderInput.focus();
+      return false;
+    }
+
+    const category = categoryInput ? categoryInput.value : '';
+    try {
+      await window.api.classes.update({
+        id: cls.id,
+        name,
+        gradeOrder: order,
+        categoryKey: category,
+      });
+    } catch (err) {
+      // A rejected IPC call must not take the dialog with it, or the user loses
+      // everything they typed and has to work out what went wrong.
+      notify.error('Could not save class', err.message);
+      return false;
+    }
+
+    const renamed = name.toLowerCase() !== cls.name.toLowerCase();
+    const categoryChanged = category !== String(cls.categoryKey || '').trim();
+    notify.ok(
+      'Class updated',
+      renamed
+        ? name + ' has been renamed. Students, invoices and marks moved with it.'
+        : name + ' has been saved.',
+    );
+    // Regrouping is invisible until the user goes looking at the tree, so say so
+    // when the category is the thing that actually changed.
+    if (categoryChanged) {
+      const band = CLASS_CATEGORIES.find((c) => c.key === category);
+      notify.ok(
+        'Category updated',
+        band
+          ? name + ' now sits under ' + band.label + ' in the sidebar.'
+          : name + ' is back to an automatic category, decided by its sort order.',
+      );
+    }
+    return true;
   },
 
   /** The category label a class id sits under, or null when it is not in the tree. */

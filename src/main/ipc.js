@@ -78,6 +78,36 @@ function id(value, field = 'id') {
   return v;
 }
 
+/**
+ * The class categories a school can put a class into.
+ *
+ * These keys are the shared vocabulary between the renderer (which draws the
+ * groups and the Select All controls) and this layer (which has to reject a key
+ * it does not recognise). They must stay in step with CLASS_CATEGORIES in
+ * renderer/js/grades.js; the smoke test reads both files and asserts the two
+ * agree, so they cannot drift apart silently.
+ */
+const CLASS_CATEGORY_KEYS = [
+  'preprimary',
+  'primary',
+  'middle',
+  'high',
+  'intermediate',
+];
+
+/**
+ * Normalises a class's categoryKey.
+ *
+ * Returns undefined when the caller did not mention the field at all, which is
+ * the signal to leave the stored value alone. '' is a real value - the honest
+ * "not assigned by hand" choice - and is always allowed, because the renderer
+ * then falls back to the band implied by the class's gradeOrder.
+ */
+function categoryKeyOf(value) {
+  if (value === undefined || value === null) return undefined;
+  return oneOf(str(value, 'Category', { max: 40 }), CLASS_CATEGORY_KEYS, '');
+}
+
 /* ------------------------------ helpers ----------------------------- */
 
 function computeStatus(amountDue, discount, amountPaid) {
@@ -1169,12 +1199,13 @@ function registerIpcHandlers(ctx) {
     return db.all('SELECT * FROM classes ORDER BY gradeOrder ASC, name ASC');
   });
 
-  handle('classes:create', async ({ name, gradeOrder = 0 }) => {
+  handle('classes:create', async ({ name, gradeOrder = 0, categoryKey = '' }) => {
     const className = str(name, 'Class name', { required: true, max: 120 });
     const order = int(gradeOrder, 'Grade order', { min: 0, fallback: 0 });
+    const category = categoryKeyOf(categoryKey);
     await db.run(
-      'INSERT INTO classes (name, gradeOrder) VALUES (?, ?)',
-      [className, order],
+      'INSERT INTO classes (name, gradeOrder, categoryKey) VALUES (?, ?, ?)',
+      [className, order, category],
     );
     const cls = await db.get('SELECT * FROM classes WHERE id = last_insert_rowid()');
     // A new class needs a curriculum too, so the still-unassigned subjects (the
@@ -1185,15 +1216,20 @@ function registerIpcHandlers(ctx) {
     return cls;
   });
 
-  handle('classes:update', async ({ id: classId, name, gradeOrder }) => {
+  handle('classes:update', async ({ id: classId, name, gradeOrder, categoryKey }) => {
     const targetId = id(classId, 'id');
     const className = str(name, 'Class name', { required: true, max: 120 });
     const order = int(gradeOrder, 'Grade order', { min: 0, fallback: 0 });
+    // '' means "not assigned by hand": the renderer falls back to the band its
+    // gradeOrder implies. An omitted field leaves the stored value untouched, so
+    // a caller that never knew about categories cannot clear them by accident.
+    const category = categoryKeyOf(categoryKey);
     const row = await db.get('SELECT name FROM classes WHERE id = ?', [targetId]);
     if (!row) throw new Error('Class not found');
     await db.run(
-      'UPDATE classes SET name = ?, gradeOrder = ? WHERE id = ?',
-      [className, order, targetId],
+      'UPDATE classes SET name = ?, gradeOrder = ?, categoryKey = COALESCE(?, categoryKey)'
+        + ' WHERE id = ?',
+      [className, order, category, targetId],
     );
     // Students, invoices, marks and grades subjects all store the class as text,
     // so a rename has to travel with it or those rows go orphaned.
@@ -1390,5 +1426,8 @@ module.exports = {
   computeStatus,
   subjectsForClass,
   normaliseClassFilter,
+  // Exported so the smoke test can prove the renderer offers exactly the bands
+  // this process is willing to store.
+  CLASS_CATEGORY_KEYS,
   excel: require('./excel'),
 };

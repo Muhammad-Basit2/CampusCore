@@ -1166,6 +1166,68 @@ section('Classes & subjects CRUD', async (ctx) => {
   const noId = await expectError(() => ctx.api('classes:update', { name: 'No Id', gradeOrder: 1 }));
   check('class update without id rejected', !!noId, String(noId));
 
+  // --- manual class categories --------------------------------------
+  // A class may be filed under a band by hand. The default is '' ("derive from
+  // gradeOrder"), which is what every existing class keeps, so the feature is
+  // strictly opt-in and the column can never surprise an existing school.
+  const unassigned = await ctx.api('classes:list', {});
+  check('classes default to no manual category',
+    unassigned.every((c) => !c.categoryKey), JSON.stringify(unassigned.map((c) => c.categoryKey)));
+
+  const categorised = await ctx.api('classes:update', {
+    id: c11.id, name: 'Senior 11-12', gradeOrder: 11, categoryKey: 'middle',
+  });
+  eq('manual category stored', categorised.categoryKey, 'middle');
+  eq('manual category survives a re-read',
+    (await ctx.api('classes:list', {})).find((c) => c.id === c11.id).categoryKey, 'middle');
+
+  // An omitted key must not silently clear an assignment, but an explicit empty
+  // string must: the renderer always sends one of the two.
+  const kept = await ctx.api('classes:update', { id: c11.id, name: 'Senior 11-12', gradeOrder: 11 });
+  eq('omitting the category keeps the assignment', kept.categoryKey, 'middle');
+
+  const cleared = await ctx.api('classes:update', {
+    id: c11.id, name: 'Senior 11-12', gradeOrder: 11, categoryKey: '',
+  });
+  eq('an explicit empty category hands the class back to the scale', cleared.categoryKey, '');
+
+  // A key the renderer does not know would file the class into an unnamed band,
+  // so the main process refuses it rather than storing something unusable.
+  const bogus = await expectError(() => ctx.api('classes:update', {
+    id: c11.id, name: 'Senior 11-12', gradeOrder: 11, categoryKey: 'super-8',
+  }));
+  check('unknown category rejected', !!bogus, String(bogus));
+  eq('a rejected category does not change the stored one',
+    (await ctx.api('classes:list', {})).find((c) => c.id === c11.id).categoryKey, '');
+
+  // The two processes keep their own copy of the band names, and a band that
+  // exists in one but not the other is a silent bug: the renderer would offer a
+  // category the main process rejects. Asserted from the source files because
+  // there is no runtime channel that carries the list.
+  const gradesSrc = fs.readFileSync(
+    path.join(__dirname, 'src', 'renderer', 'js', 'grades.js'), 'utf8',
+  );
+  const block = gradesSrc.match(/const CLASS_CATEGORIES = \[([\s\S]*?)\];/);
+  const rendererKeys = block
+    ? Array.from(block[1].matchAll(/key:\s*'([^']+)'/g)).map((m) => m[1])
+    : [];
+  check('the renderer still declares its category bands', rendererKeys.length > 0,
+    JSON.stringify(rendererKeys));
+  eq('main and renderer agree on the category keys',
+    require('./src/main/ipc').CLASS_CATEGORY_KEYS.slice().sort(), rendererKeys.slice().sort());
+
+  const created = await ctx.api('classes:create', {
+    name: 'Nursery', gradeOrder: 0, categoryKey: 'preprimary',
+  });
+  eq('a class can be created already categorised', created.categoryKey, 'preprimary');
+  const badCreate = await expectError(() => ctx.api('classes:create', {
+    name: 'Nursery 2', categoryKey: 'nonsense',
+  }));
+  check('unknown category rejected on create', !!badCreate, String(badCreate));
+  // Removed again: a class with no students on it is pruned by the roster sync,
+  // so leaving it behind would make the later class-count assertions off by one.
+  await ctx.api('classes:remove', { id: created.id });
+
   // Duplicate names are blocked by the UNIQUE index (case-insensitive).
   const dupe = await expectError(() => ctx.api('classes:create', { name: 'grade 1', gradeOrder: 1 }));
   check('duplicate class name rejected', !!dupe && /UNIQUE/i.test(dupe.message), String(dupe));

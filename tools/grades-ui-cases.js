@@ -94,11 +94,38 @@ const SETTINGS = { passMarkPercentage: '50', schoolName: 'Test School', academic
 function makeApi() {
   // Records what the Subjects tab sent so the assertions can prove the payload
   // carries an explicit class list rather than a wildcard flag.
-  const calls = { addSubject: [], updateSubject: [] };
+  const calls = { addSubject: [], updateSubject: [], classUpdate: [] };
+  // A class edit has to be visible to the tree rebuild that follows it, so the
+  // stub reflects the save into an override layer that classes.list() merges
+  // over the fixture. Mutating CLASSES directly would leak into every earlier
+  // assertion that depends on its gradeOrder.
+  const classEdits = new Map();
+  const classList = async () => CLASSES
+    .map((c) => (classEdits.has(Number(c.id)) ? { ...c, ...classEdits.get(Number(c.id)) } : { ...c }))
+    // Mirrors the real handler's `ORDER BY gradeOrder ASC, name ASC`. Without
+    // this the picker and the tree would keep the fixture's own order, which
+    // would let a grouping assertion pass for the wrong reason.
+    .sort((a, b) => (a.gradeOrder - b.gradeOrder)
+      || String(a.name).localeCompare(String(b.name)));
+  const classUpdate = async (payload) => {
+    calls.classUpdate.push(payload);
+    const id = Number(payload.id);
+    const row = CLASSES.find((c) => Number(c.id) === id);
+    if (!row) return {};
+    classEdits.set(id, {
+      name: payload.name,
+      gradeOrder: payload.gradeOrder,
+      categoryKey: payload.categoryKey,
+    });
+    return { ...row, ...classEdits.get(id) };
+  };
+  // A class assigned to a band by hand, for the tests that need a saved one.
+  classEdits.clear();
+  classEdits.set(2, { name: 'Play Group', gradeOrder: 0, categoryKey: '' });
   return {
     calls,
     settings: { getAll: async () => SETTINGS },
-    classes: { list: async () => CLASSES },
+    classes: { list: classList, update: classUpdate },
     students: { list: async () => STUDENTS },
     grades: {
       listSubjects: async ({ studentClass } = {}) => subjectsForClass(studentClass),
@@ -340,16 +367,18 @@ window.__run = async function run() {
   const options = $$('#examNames option').map((o) => o.value);
   record('committed exam added to suggestions', options.includes('Midterm 2026'), options.join('|'));
 
-  return window.__runResults(G, out, sleep, record, eq);
+  return window.__runResults(G, N, out, sleep, record, eq);
 };
 
 /* ------------------------------------------------------------------ */
 /* Part two: results, filters and subjects                             */
 /*                                                                     */
-/* Split out so neither half becomes an unreadable block.               */
+/* Split out so neither half becomes an unreadable block. Nav is        */
+/* passed in alongside Grades because part three drives the sidebar     */
+/* tree, which lives on the router rather than in the view.             */
 /* ------------------------------------------------------------------ */
 
-window.__runResults = async function runResults(G, out, sleep, record, eq) {
+window.__runResults = async function runResults(G, N, out, sleep, record, eq) {
   /* ---------------- results tab ---------------- */
   // Part one left the view scoped to Class 1 (two students, English + Maths).
   G.tab = 'results';
@@ -861,6 +890,123 @@ window.__runResults = async function runResults(G, out, sleep, record, eq) {
     G.renderTab = realRenderTab;
   }
 
+  /* ---------------- assigning a category to a class ---------------- */
+  // The sidebar tree is the only reachable route to a class's settings (there is
+  // no Classes & Subjects view wired into the router), so a category assigned
+  // there is what a user actually has to work with.
+  {
+    const clearToasts = () => { document.querySelector('#toastStack').innerHTML = ''; };
+    const groupsIn = () => Array.from(
+      document.querySelectorAll('#navGradesChildren .nav-cat-group'),
+    ).map((g) => ({
+      cat: g.dataset.cat,
+      classes: Array.from(g.querySelectorAll('.nav-class')).map((c) => c.textContent.trim()),
+    }));
+    const editBtnFor = (id) => document.querySelector(
+      '#navGradesChildren .nav-class-edit[data-class-id="' + id + '"]',
+    );
+    const editBtn = editBtnFor(2);
+    record('every class in the tree offers an edit control', !!editBtn);
+    record('there is one edit control per class',
+      document.querySelectorAll('#navGradesChildren .nav-class-edit').length
+        === document.querySelectorAll('#navGradesChildren .nav-class').length);
+
+    // The class starts unassigned, so it must still be banded by its sort order.
+    await N.buildTree();
+    await sleep(60);
+    eq('an unassigned class keeps its derived band', groupsIn(), [
+      { cat: 'preprimary', classes: ['Play Group'] },
+      { cat: 'primary', classes: ['Class 1'] },
+    ]);
+
+    // Re-queried after the rebuild: buildTree replaces the markup, so the node
+    // captured before it is detached and clicking it would reach no listener.
+    editBtnFor(2).click();
+    await sleep(120);
+    const select = document.querySelector('#nc_category');
+    record('the class editor offers a category control', !!select);
+    record('an unassigned class opens on Automatic',
+      !!select && select.value === '', select && select.value);
+    // "Automatic" plus the five real bands, and nothing else.
+    eq('the category control offers Automatic and every band',
+      select ? Array.from(select.options).map((o) => o.value) : null,
+      ['', 'preprimary', 'primary', 'middle', 'high', 'intermediate']);
+
+    // Assign Play Group to Primary by hand. Its sort order (0) still says
+    // Pre-Primary, so this can only be the manual column winning.
+    select.value = 'primary';
+    const order = document.querySelector('#nc_order');
+    record('the editor shows the current sort order', !!order && order.value === '0',
+      order && order.value);
+    const before = window.api.calls.classUpdate.length;
+    document.querySelector('.modal-foot .btn.primary').click();
+    await sleep(300);
+
+    eq('saving sends exactly one update', window.api.calls.classUpdate.length, before + 1);
+    const sent = window.api.calls.classUpdate[window.api.calls.classUpdate.length - 1];
+    eq('the assigned category is sent to the main process', sent.categoryKey, 'primary');
+    eq('the save is scoped to the class that was edited', Number(sent.id), 2);
+
+    // The tree rebuilt, and the class followed its new band.
+    eq('the class moved to the band it was assigned to', groupsIn(), [
+      { cat: 'primary', classes: ['Play Group', 'Class 1'] },
+    ]);
+    record('reopening the editor shows the assignment',
+      (() => {
+        document.querySelector(
+          '#navGradesChildren .nav-class-edit[data-class-id="2"]',
+        ).click();
+        return document.querySelector('#nc_category').value === 'primary';
+      })());
+    document.querySelector('.modal-foot .btn.ghost').click();
+    await sleep(120);
+
+    // Handing the class back to Automatic must restore the derived grouping.
+    document.querySelector('#navGradesChildren .nav-class-edit[data-class-id="2"]').click();
+    await sleep(120);
+    document.querySelector('#nc_category').value = '';
+    document.querySelector('.modal-foot .btn.primary').click();
+    await sleep(300);
+    eq('clearing the assignment restores the derived band', groupsIn(), [
+      { cat: 'preprimary', classes: ['Play Group'] },
+      { cat: 'primary', classes: ['Class 1'] },
+    ]);
+
+    // A rejected save must not close the dialog, or the user loses the edit.
+    clearToasts();
+    const realUpdate = window.api.classes.update;
+    window.api.classes.update = async () => { throw new Error('disk is full'); };
+    document.querySelector('#navGradesChildren .nav-class-edit[data-class-id="2"]').click();
+    await sleep(120);
+    document.querySelector('.modal-foot .btn.primary').click();
+    await sleep(250);
+    eq('a rejected class save raises one notification',
+      document.querySelectorAll('#toastStack .toast').length, 1);
+    record('a rejected class save keeps the dialog open',
+      !!document.querySelector('#nc_category'));
+    record('a rejected class save explains itself',
+      /disk is full/.test(document.querySelector('#toastStack').textContent),
+      document.querySelector('#toastStack').textContent);
+    document.querySelector('.modal-foot .btn.ghost').click();
+    await sleep(120);
+    window.api.classes.update = realUpdate;
+
+    // A hand-assigned band must not change the class it sorts under, and the
+    // empty string must never be mistaken for a band named "".
+    const cat = eval('classCategory');
+    eq('a manual assignment wins over the sort order',
+      cat({ id: 2, name: 'Play Group', gradeOrder: 0, categoryKey: 'intermediate' }).key,
+      'intermediate');
+    eq('an unknown key falls back to the derived band rather than vanishing',
+      cat({ id: 2, name: 'Play Group', gradeOrder: 0, categoryKey: 'nonsense' }).key,
+      'preprimary');
+    eq('a class with no key is still derived',
+      cat({ id: 2, name: 'Play Group', gradeOrder: 0, categoryKey: '' }).key,
+      'preprimary');
+    eq('a missing column derives just as before',
+      cat({ id: 1, name: 'Class 1', gradeOrder: 1 }).key, 'primary');
+  }
+
   /* ---------------- escaping ---------------- */
   // buildTree() re-reads the roster from the API, so the hostile name has to be
   // injected there rather than into Nav.treeClasses.
@@ -877,7 +1023,6 @@ window.__runResults = async function runResults(G, out, sleep, record, eq) {
   record('the escaped name is still readable in the toolbar',
     shell.includes(esc(hostile)));
 
-  const N = eval('Nav');
   await N.buildTree();
   const treeEl = document.querySelector('#navGradesChildren');
   // innerHTML serialises an attribute value with only &, " and nbsp escaped, so

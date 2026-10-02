@@ -150,6 +150,31 @@ async function main() {
     JSON.stringify(forClass1.map((s) => [s.name, s.classNames])),
   );
 
+  // --- manual class categories on a pre-feature database ---------------
+  // The seeded `classes` table predates the column, so this is exactly the
+  // upgrade path a real school takes. It has to gain the column and come out
+  // with every class still unassigned, i.e. still grouped by gradeOrder.
+  const classCols = await database.all('PRAGMA table_info(classes)');
+  check('the legacy classes table gained categoryKey',
+    classCols.some((c) => c.name === 'categoryKey'),
+    classCols.map((c) => c.name).join(','));
+
+  const migrated = await api('classes:list', {});
+  check('every migrated class is left unassigned',
+    migrated.every((c) => !c.categoryKey),
+    JSON.stringify(migrated.map((c) => [c.name, c.categoryKey])));
+  eq('no migrated class lost its sort order',
+    migrated.filter((c) => c.name === 'Class 1').map((c) => Number(c.gradeOrder)), [1]);
+
+  // Assigning by hand must work on a migrated database, and clearing it again
+  // must put the class back where the scale would have put it.
+  await api('classes:update', { id: 2, name: 'Class 2', gradeOrder: 2, categoryKey: 'high' });
+  eq('a migrated class accepts a manual category',
+    (await api('classes:list', {})).find((c) => c.id === 2).categoryKey, 'high');
+  await api('classes:update', { id: 2, name: 'Class 2', gradeOrder: 2, categoryKey: '' });
+  eq('and can hand it back to the scale',
+    (await api('classes:list', {})).find((c) => c.id === 2).categoryKey, '');
+
   // --- idempotence -----------------------------------------------------
   const before = rows.map((r) => [r.name, r.className]).sort();
   await database.closeDatabase();

@@ -115,6 +115,10 @@ CREATE TABLE IF NOT EXISTS classes (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT    NOT NULL UNIQUE COLLATE NOCASE,
   gradeOrder  INTEGER NOT NULL DEFAULT 0,
+  -- Optional manual category assignment. NULL means "not assigned by hand",
+  -- and the renderer falls back to the gradeOrder-derived band, so an existing
+  -- school looks exactly as it did before this column existed.
+  categoryKey TEXT    NOT NULL DEFAULT '',
   createdAt   TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_classes_order ON classes(gradeOrder);
@@ -532,6 +536,27 @@ async function migrateClassSubjects() {
   // The junction table is the source of truth, so the denormalised columns have
   // to agree with it before any query reads them.
   await refreshSubjectClassColumns();
+
+  // Manual class categories are opt-in, so this only ever adds the column.
+  await migrateClassCategories();
+}
+
+/**
+ * Adds classes.categoryKey to databases created before manual category
+ * assignment existed.
+ *
+ * The column defaults to '' ("derive from gradeOrder"), which is exactly how
+ * every existing school already behaves, so this migration changes no grouping
+ * it is not explicitly asked to. Guarded by PRAGMA so it runs once and is a
+ * no-op on a fresh database where SCHEMA already created the column.
+ */
+async function migrateClassCategories() {
+  const cols = await all('PRAGMA table_info(classes)');
+  if (!cols.length) return;                       // no classes table yet
+  if (cols.some((c) => c.name === 'categoryKey')) return;
+
+  await run("ALTER TABLE classes ADD COLUMN categoryKey TEXT NOT NULL DEFAULT ''");
+  await run("UPDATE classes SET categoryKey = '' WHERE categoryKey IS NULL");
 }
 
 /**

@@ -237,6 +237,28 @@ table.res-table td.muted { color: var(--muted); }
 }
 .nav-class.active .nav-dot { background: #7c9cff; box-shadow: 0 0 8px rgba(124, 156, 255, 0.8); }
 
+/* The class name and its edit button share a row so the name keeps the full
+   width of the tree. The button is hidden until the row is hovered or the
+   button itself is focused, so a school with twenty classes still reads as a
+   clean list until someone goes looking for the affordance. */
+.nav-class-row { position: relative; display: flex; align-items: center; gap: 2px; }
+.nav-class-row .nav-class { flex: 1; min-width: 0; }
+.nav-class-edit {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; margin-right: 4px;
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  color: #8fa3c4; font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  opacity: 0; transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.nav-class-row:hover .nav-class-edit,
+.nav-class-edit:focus-visible { opacity: 1; }
+.nav-class-edit:hover { background: rgba(79, 140, 255, 0.18); color: #dbe6ff; }
+.nav-class-edit:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+/* A touch device has no hover, so the affordance has to be permanently visible
+   or the class can never be edited there at all. */
+@media (hover: none) { .nav-class-edit { opacity: 1; } }
+
 /* Collapsed rail: the tree has nowhere to go, so it is hidden with the labels
    rather than spilling an icon-less list down the sidebar. */
 .app.collapsed .nav-children, .app.collapsed .nav-label, .app.collapsed .nav-item kbd,

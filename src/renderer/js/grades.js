@@ -1398,9 +1398,11 @@ const Grades = {
 /**
  * The class categories the school is split into, in the order they are shown.
  *
- * A category is not stored anywhere: it is derived from each class's
+ * A category is not stored for most classes: it is derived from each class's
  * `gradeOrder`, so renaming or re-ordering classes regroups them automatically
- * without a migration or an extra field on the classes table.
+ * without a migration or an extra field on the classes table. A school that
+ * needs a different grouping can assign any class by hand (see classCategory),
+ * which overrides the derived band for that class only.
  *
  * `max` is the highest `gradeOrder` that still belongs to the band; the bands
  * are contiguous and end at Infinity, so every class lands in exactly one of
@@ -1417,21 +1419,38 @@ const CLASS_CATEGORIES = [
 /**
  * The category a class belongs to.
  *
- * `gradeOrder` is the only reliable signal the app has: the classes table has
- * no category column, and class names are free text ("Play Group", "Kinder",
- * "Senior 11-12"), so a name-based guess would misfile a school that names its
- * classes differently. Anything the scale does not place is reported as its own
- * "Other" band so it still gets a group and a Select All in the form.
+ * A hand-assigned `categoryKey` on the class always wins. `gradeOrder` is the
+ * fallback for every class that has never been assigned by hand, which keeps a
+ * school that has not touched this feature grouped exactly as it was before the
+ * column existed.
+ *
+ * Class names are free text ("Play Group", "Kinder", "Senior 11-12"), so the
+ * fallback deliberately does not guess from the name - that would misfile a
+ * school that names its classes differently. Anything the scale does not place
+ * is reported as its own "Other" band so it still gets a group and a Select All
+ * in the form.
  *
  * @param {object} cls  a row from the classes table
  * @returns {{key: string, label: string}}  the band this class belongs to
  */
 function classCategory(cls) {
+  // An unrecognised key (a stale build, a hand-edited database) must not make
+  // the class vanish, so fall through to the derived band instead.
+  const assigned = String((cls && cls.categoryKey) || '').trim();
+  const manual = CLASS_CATEGORIES.find((c) => c.key === assigned);
+  if (manual) return manual;
+
   const order = Number(cls && cls.gradeOrder);
   const band = Number.isFinite(order)
     ? CLASS_CATEGORIES.find((c) => order <= c.max)
     : null;
   return band || { key: 'other', label: 'Other' };
+}
+
+/** True when this class's category came from a hand assignment, not the fallback. */
+function hasManualCategory(cls) {
+  const assigned = String((cls && cls.categoryKey) || '').trim();
+  return !!assigned && CLASS_CATEGORIES.some((c) => c.key === assigned);
 }
 
 /**
