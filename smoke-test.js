@@ -497,14 +497,43 @@ section('Dashboard aggregation', async (ctx) => {
 /* =================================================================== */
 
 section('Subjects', async (ctx) => {
-  const added = await ctx.api('grades:add-subject', { name: 'Astronomy', maxMarks: 50 });
+  // Students registered in earlier sections put Class 1 and Class 2 on the
+  // roster, so both exist and can be assigned.
+  const classes = await ctx.api('classes:list', {});
+  const class1 = classes.find((c) => c.name === 'Class 1');
+  const class2 = classes.find((c) => c.name === 'Class 2');
+  check('fixture classes available', !!class1 && !!class2, JSON.stringify(classes.map((c) => c.name)));
+
+  // A subject with no class at all would be invisible in every grid, so it is
+  // refused rather than stored.
+  const noClass = await expectError(() =>
+    ctx.api('grades:add-subject', { name: 'Astronomy', maxMarks: 50 }),
+  );
+  check('subject without a class rejected', !!noClass && /at least one class/i.test(noClass.message), String(noClass));
+
+  const added = await ctx.api('grades:add-subject', {
+    name: 'Astronomy',
+    maxMarks: 50,
+    classIds: [class1.id],
+  });
   check('subject added', Number(added.id) > 0, 'id=' + added.id);
   eq('subject maxMarks', added.maxMarks, 50);
+  eq('subject records its class', added.className, 'Class 1');
+  eq('subject records its class ids', JSON.parse(added.classIds), [class1.id]);
 
   const dupe = await expectError(() =>
-    ctx.api('grades:add-subject', { name: 'astronomy', maxMarks: 50 }),
+    ctx.api('grades:add-subject', { name: 'astronomy', maxMarks: 50, classIds: [class1.id] }),
   );
-  check('duplicate subject rejected', !!dupe && /already exists/i.test(dupe.message), String(dupe));
+  check('duplicate subject in the same class rejected', !!dupe && /already configured for Class 1/i.test(dupe.message), String(dupe));
+
+  // The same name in a class that does not have it yet is not a duplicate.
+  const otherClass = await ctx.api('grades:add-subject', {
+    name: 'Astronomy',
+    maxMarks: 60,
+    classIds: [class2.id],
+  });
+  check('same subject name allowed in another class', Number(otherClass.id) > 0, JSON.stringify(otherClass));
+  await ctx.api('grades:remove-subject', { id: otherClass.id });
 
   const updated = await ctx.api('grades:update-subject', {
     id: added.id,
@@ -512,6 +541,8 @@ section('Subjects', async (ctx) => {
     maxMarks: 75,
   });
   eq('subject updated', updated.maxMarks, 75);
+  // Omitting the class fields must keep the existing assignment.
+  eq('assignment untouched by a name/marks-only update', updated.className, 'Class 1');
 
   const removed = await ctx.api('grades:remove-subject', { id: added.id });
   check('subject removed', removed.deleted === true, JSON.stringify(removed));
@@ -519,6 +550,77 @@ section('Subjects', async (ctx) => {
   const after = await ctx.api('grades:list-subjects', {});
   eq('subject count back to 7', after.length, 7);
   ctx.subjects = after;
+});
+
+/* =================================================================== */
+/* 5b. Subject / class assignment                                      */
+/* =================================================================== */
+
+section('Multi-class subject assignment', async (ctx) => {
+  const classes = await ctx.api('classes:list', {});
+  const class1 = classes.find((c) => c.name === 'Class 1');
+  const class2 = classes.find((c) => c.name === 'Class 2');
+
+  // The picker has no "all classes" option any more, so one subject row can be
+  // assigned to several named classes at once.
+  const multi = await ctx.api('grades:add-subject', {
+    name: 'Computer Studies',
+    maxMarks: 75,
+    classIds: [class2.id, class1.id],
+  });
+  eq('multi-class subject stored both names', multi.className, 'Class 1, Class 2');
+  eq('multi-class subject stored both ids', JSON.parse(multi.classIds).sort(), [class1.id, class2.id]);
+
+  const links = await ctx.qall(
+    `SELECT c.name FROM subject_classes sc
+       JOIN classes c ON c.id = sc.classId
+      WHERE sc.subjectId = ?
+      ORDER BY c.gradeOrder`,
+    [multi.id],
+  );
+  eq('junction rows written for both classes', links.map((l) => l.name), ['Class 1', 'Class 2']);
+
+  // --- the toolbar filter is an explicit membership test ---------------
+  for (const cls of [class1, class2]) {
+    const list = await ctx.api('grades:list-subjects', { studentClass: cls.name });
+    const row = list.find((s) => s.id === multi.id);
+    check(`visible in ${cls.name}`, !!row, list.map((s) => s.name).join('|'));
+    eq(`reports both classes in ${cls.name}`, row.classNames.slice().sort(), ['Class 1', 'Class 2']);
+    eq(`reports both class ids in ${cls.name}`, row.classIds.slice().sort((a, b) => a - b), [class1.id, class2.id].sort((a, b) => a - b));
+  }
+
+  // --- narrowing to one class removes it from the other ----------------
+  const narrowed = await ctx.api('grades:update-subject', {
+    id: multi.id,
+    name: multi.name,
+    maxMarks: multi.maxMarks,
+    classIds: [class2.id],
+  });
+  eq('narrowed to a single class', narrowed.className, 'Class 2');
+  const stillIn1 = (await ctx.api('grades:list-subjects', { studentClass: class1.name }))
+    .some((s) => s.id === multi.id);
+  eq('no longer visible in the removed class', stillIn1, false);
+  const stillIn2 = (await ctx.api('grades:list-subjects', { studentClass: class2.name }))
+    .some((s) => s.id === multi.id);
+  eq('still visible in the kept class', stillIn2, true);
+
+  // --- a subject with no class cannot be saved at all ------------------
+  const empty = await expectError(() =>
+    ctx.api('grades:update-subject', { id: multi.id, name: multi.name, maxMarks: 50, classIds: [] }),
+  );
+  check('clearing every class rejected', !!empty && /at least one class/i.test(empty.message), String(empty));
+
+  // --- the denormalised columns follow the junction table --------------
+  await ctx.api('grades:remove-subject', { id: multi.id });
+  const leftovers = await ctx.q1(
+    'SELECT COUNT(*) AS c FROM subject_classes WHERE subjectId = ?',
+    [multi.id],
+  );
+  eq('assignment rows removed with the subject', leftovers.c, 0);
+
+  const total = await ctx.api('grades:list-subjects', {});
+  eq('catalogue back to 7', total.length, 7);
+  check('no subject is left without a class', total.every((s) => (s.classNames || []).length > 0), JSON.stringify(total.map((s) => [s.name, s.classNames])));
 });
 
 /* =================================================================== */
@@ -586,6 +688,93 @@ section('Marks entry and clearing', async (ctx) => {
 
   const noExam = await expectError(() => ctx.api('grades:save-marks', { examName: '', rows }));
   check('missing exam name rejected', !!noExam, String(noExam));
+});
+
+/* =================================================================== */
+/* 6b. Class-name casing must not hide students                       */
+/* =================================================================== */
+
+/*
+ * Class names are compared case-insensitively across the app (classes table
+ * is UNIQUE COLLATE NOCASE and every other query uses COLLATE NOCASE), so
+ * mixed-case class names are a supported state. The grading views filter by
+ * class too; if that filter is case-sensitive, a student stored under
+ * "play group" disappears from the grid of the pill labelled "Play Group".
+ * These tests pin the case-insensitive behaviour end to end.
+ */
+section('Case-insensitive class matching', async (ctx) => {
+  const cls = 'KiNDER MixedCase';
+  const roll = 'case-1';
+
+  const created = await ctx.api('students:create', {
+    rollNo: roll,
+    name: 'Casey Mixed',
+    studentClass: cls,
+    guardian: 'Guardian',
+    phone: '',
+  });
+  check('student created in mixed-case class', !!created.id, JSON.stringify(created));
+
+  // Registering the student created the class, so its id is available for the
+  // explicit subject assignment the new model requires.
+  const clsRow = (await ctx.api('classes:list', {})).find(
+    (c) => String(c.name).toLowerCase() === cls.toLowerCase(),
+  );
+  check('mixed-case class registered on the roster', !!clsRow, cls);
+
+  const sub = await ctx.api('grades:add-subject', {
+    name: 'Mixed Subject',
+    maxMarks: 50,
+    classIds: [clsRow.id],
+  });
+
+  await ctx.api('grades:save-marks', {
+    examName: ctx.exam,
+    rows: [{ studentId: created.id, subject: 'Mixed Subject', marksObtained: 40, maxMarks: 50 }],
+  });
+
+  // The class pill shows the casing from the classes table; queries may pass
+  // either casing and must find the same student.
+  const stored = await ctx.q1('SELECT studentClass FROM students WHERE id = ?', [created.id]);
+  const storedClass = stored.studentClass;
+  const flipped = storedClass.toLowerCase() === storedClass ? storedClass.toUpperCase() : storedClass.toLowerCase();
+
+  const byExact = await ctx.api('grades:get-results', {
+    examName: ctx.exam,
+    studentClass: storedClass,
+  });
+  const byFlipped = await ctx.api('grades:get-results', {
+    examName: ctx.exam,
+    studentClass: flipped,
+  });
+
+  const inExact = byExact.results.filter((r) => r.student.id === created.id).length;
+  const inFlipped = byFlipped.results.filter((r) => r.student.id === created.id).length;
+  eq('exact-case filter finds the student', inExact, 1);
+  eq('opposite-case filter finds the student too', inFlipped, 1);
+
+  // The mark must also be found for that student, not merely the student row.
+  const row = byFlipped.results.find((r) => r.student.id === created.id);
+  check('mixed-case result row exists', !!row, 'missing');
+  if (row) {
+    const subj = row.report.subjects.find((s) => s.subject === 'Mixed Subject');
+    check('subject present on mixed-case row', !!subj, JSON.stringify(row.report.subjects));
+    if (subj) {
+      eq('mark matched case-insensitively', subj.marksObtained, 40);
+      check('mark flagged as entered', subj.hasMark === true, 'hasMark=' + subj.hasMark);
+    }
+  }
+
+  const subjectsFlipped = await ctx.api('grades:list-subjects', { studentClass: flipped });
+  check(
+    'subjects resolve under flipped casing',
+    subjectsFlipped.some((s) => s.name === 'Mixed Subject'),
+    subjectsFlipped.map((s) => s.name).join('|'),
+  );
+
+  // Clean up so later sections see the original fixture counts.
+  await ctx.api('students:remove', { id: created.id });
+  await ctx.api('grades:remove-subject', { id: sub.id });
 });
 
 /* =================================================================== */
@@ -774,6 +963,14 @@ section('IPC channel registry', (ctx) => {
     'subjects:create',
     'subjects:update',
     'subjects:remove',
+    'data:export-students',
+    'data:export-invoices',
+    'data:export-marks',
+    'data:export-classes-subjects',
+    'data:import-students',
+    'data:import-students-dialog',
+    'data:import-marks',
+    'data:import-marks-dialog',
   ];
   for (const channel of expected) {
     check(`channel ${channel} registered`, ctx.registered.has(channel), 'missing');
@@ -782,31 +979,183 @@ section('IPC channel registry', (ctx) => {
 });
 
 /* =================================================================== */
+/* 12. Excel import (students)                                        */
+/* =================================================================== */
+
+section('Excel students import', async (ctx) => {
+  const excel = require('./src/main/excel');
+  const XLSX = require('xlsx');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'campuscore-xlsx-'));
+  const file = path.join(dir, 'students.xlsx');
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.aoa_to_sheet([
+      ['Roll No', 'Name', 'Student Class', 'Guardian', 'Phone'],
+      ['x-100', 'Imported One', 'Class 3', 'Guard A', '0300-1111111'],
+      ['x-101', 'Imported Two', 'Class 3', '', ''],
+      ['', 'Missing roll', 'Class 3', '', ''],
+      ['A-001', 'Alice Khan Jr', ctx.alice.studentClass, 'Mr. Khan', ''],
+    ]),
+    'Students',
+  );
+  XLSX.writeFile(wb, file);
+
+  const result = await ctx.api('data:import-students', { filePath: file });
+  eq('two new students imported', result.created, 2);
+  eq('one existing student updated', result.updated, 1);
+  eq('blank row skipped', result.skipped, 1);
+
+  const one = await ctx.qall(
+    'SELECT name, guardian, phone FROM students WHERE rollNo = ? AND studentClass = ?',
+    ['x-100', 'Class 3'],
+  );
+  eq('imported row stored verbatim', one[0] && one[0].name, 'Imported One');
+  eq('guardian stored', one[0] && one[0].guardian, 'Guard A');
+  eq('phone stored', one[0] && one[0].phone, '0300-1111111');
+
+  const blank = await ctx.qall(
+    'SELECT guardian FROM students WHERE rollNo = ? AND studentClass = ?',
+    ['x-101', 'Class 3'],
+  );
+  eq('blank optional cells accepted', blank[0] && blank[0].guardian, '');
+
+  // Re-importing the same file must be a no-op rather than duplicating rows.
+  const again = await ctx.api('data:import-students', { filePath: file });
+  eq('re-import creates nothing', again.created, 0);
+  eq('re-import updates nothing', again.updated, 0);
+  eq('re-import skips every row', again.skipped, 4);
+
+  const total = await ctx.q1(
+    "SELECT COUNT(*) AS c FROM students WHERE rollNo LIKE 'x-%'",
+  );
+  eq('no duplicate rows created', total.c, 2);
+
+  // An existing student keeps the details the file left blank.
+  const alice = await ctx.q1('SELECT name, guardian, phone FROM students WHERE rollNo = ?', ['A-001']);
+  eq('existing student renamed', alice.name, 'Alice Khan Jr');
+  eq('blank phone did not wipe data', alice.phone, '0300-1111111');
+
+  // Missing required columns must be reported, not silently imported.
+  const badFile = path.join(dir, 'bad.xlsx');
+  const badWb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(badWb, XLSX.utils.aoa_to_sheet([['Roll No', 'Name'], ['1', 'No Class']]), 'S');
+  XLSX.writeFile(badWb, badFile);
+  const badErr = await expectError(() => ctx.api('data:import-students', { filePath: badFile }));
+  check('missing required column errors', !!badErr && /missing required column/i.test(badErr.message), String(badErr));
+
+  const emptyFile = path.join(dir, 'empty.xlsx');
+  const emptyWb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(emptyWb, XLSX.utils.aoa_to_sheet([]), 'S');
+  XLSX.writeFile(emptyWb, emptyFile);
+  const emptyErr = await expectError(() => ctx.api('data:import-students', { filePath: emptyFile }));
+  check('empty workbook errors', !!emptyErr && /empty/i.test(emptyErr.message), String(emptyErr));
+
+  const noPath = await expectError(() => ctx.api('data:import-students', {}));
+  check('import without a file path errors', !!noPath, String(noPath));
+
+  /* --- marks import ------------------------------------------------- */
+
+  const marksWb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    marksWb,
+    XLSX.utils.aoa_to_sheet([
+      ['Roll No', 'Student Class', 'Subject', 'Marks Obtained', 'Max Marks'],
+      ['A-001', ctx.alice.studentClass, 'Mathematics', 45, 50],
+      ['B-001', ctx.carol.studentClass, 'Mathematics', 38, 50],
+      ['A-001', ctx.alice.studentClass, 'English', 41, 50],
+      ['Z-999', ctx.alice.studentClass, 'Mathematics', 10, 50],   // unknown student
+    ]),
+    'Marks',
+  );
+  const marksFile = path.join(dir, 'marks.xlsx');
+  XLSX.writeFile(marksWb, marksFile);
+
+  const marksResult = await ctx.api('data:import-marks', {
+    filePath: marksFile,
+    examName: 'Imported Exam',
+  });
+  eq('three mark rows inserted', marksResult.inserted, 3);
+  eq('unknown student skipped', marksResult.skipped, 1);
+
+  const aliceMath = await ctx.qall(
+    'SELECT marksObtained, maxMarks FROM marks WHERE examName = ? AND rollNo = ? AND subject = ?',
+    ['Imported Exam', 'A-001', 'Mathematics'],
+  );
+  eq('marks obtained stored', Number(aliceMath[0] && aliceMath[0].marksObtained), 45);
+  eq('explicit max marks honoured', Number(aliceMath[0] && aliceMath[0].maxMarks), 50);
+
+  // Re-importing the same sheet upserts rather than duplicating.
+  const marksAgain = await ctx.api('data:import-marks', {
+    filePath: marksFile,
+    examName: 'Imported Exam',
+  });
+  eq('re-import inserts nothing', marksAgain.inserted, 0);
+  eq('re-import updates existing rows', marksAgain.updated, 3);
+  const dupeCount = await ctx.q1(
+    "SELECT COUNT(*) AS c FROM marks WHERE examName = 'Imported Exam'",
+  );
+  eq('no duplicate mark rows', dupeCount.c, 3);
+
+  const noExam = await expectError(() =>
+    ctx.api('data:import-marks', { filePath: marksFile }),
+  );
+  check('marks import without exam name errors', !!noExam, String(noExam));
+
+  const badMarks = await expectError(() =>
+    ctx.api('data:import-marks', { filePath: badFile, examName: 'Imported Exam' }),
+  );
+  check('marks import validates columns', !!badMarks && /missing required column/i.test(badMarks.message), String(badMarks));
+
+  check('excel module exposes importStudents', typeof excel.importStudents === 'function', typeof excel.importStudents);
+  check('excel module exposes importMarks', typeof excel.importMarks === 'function', typeof excel.importMarks);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/* =================================================================== */
 /* 12. Classes & subjects CRUD                                         */
 /* =================================================================== */
 
 section('Classes & subjects CRUD', async (ctx) => {
   // --- classes --------------------------------------------------------
-  const empty = await ctx.api('classes:list', {});
-  eq('starts with no classes', empty.length, 0);
+  // Classes are no longer created by hand: registering a student into one
+  // creates it. Earlier sections registered students in Class 1 / 2 / 3, so
+  // those rows already exist by the time we get here.
+  const autoClasses = await ctx.api('classes:list', {});
+  check(
+    'registering a student auto-created their classes',
+    ['Class 1', 'Class 2', 'Class 3'].every((n) => autoClasses.some((c) => c.name === n)),
+    JSON.stringify(autoClasses.map((c) => c.name)),
+  );
 
+  // Use names that do not collide with the auto-created ones.
   const c10 = await ctx.api('classes:create', { name: 'Class 10', gradeOrder: 10 });
-  const c1 = await ctx.api('classes:create', { name: 'Class 1', gradeOrder: 1 });
+  const c1 = await ctx.api('classes:create', { name: 'Grade 1', gradeOrder: 1 });
   const c11 = await ctx.api('classes:create', { name: 'Class 11-12', gradeOrder: 11 });
   check('class created', c10.id > 0, JSON.stringify(c10));
   eq('class grade order stored', c10.gradeOrder, 10);
   eq('class timestamp set', !!c10.createdAt, true);
 
   const listed = await ctx.api('classes:list', {});
-  eq('classes sorted by grade order', listed.map((c) => c.name), [
-    'Class 1',
-    'Class 10',
-    'Class 11-12',
-  ]);
+  // Auto-created classes take the next free order, so they interleave with the
+  // manually seeded ones rather than all landing at the front.
+  const orders = listed.map((c) => Number(c.gradeOrder));
+  check('class list is sorted by grade order', orders.every((o, i) => i === 0 || o >= orders[i - 1]), JSON.stringify(orders));
+  check(
+    'auto-created classes are still listed',
+    ['Class 1', 'Class 2', 'Class 3'].every((n) => listed.some((c) => c.name === n)),
+    JSON.stringify(listed.map((c) => c.name)),
+  );
 
-  const renamed = await ctx.api('classes:update', { id: c1.id, name: 'Grade 1', gradeOrder: 1 });
-  eq('class renamed', renamed.name, 'Grade 1');
+  // Re-sorting to the very front wins the tie against the auto-created rows.
+  const reordered = await ctx.api('classes:update', { id: c1.id, name: 'Grade 1', gradeOrder: 0 });
+  eq('class renamed to same name is a no-op', reordered.name, 'Grade 1');
   eq('class re-sorted to front', (await ctx.api('classes:list', {}))[0].id, c1.id);
+
+  const renamed = await ctx.api('classes:update', { id: c11.id, name: 'Senior 11-12', gradeOrder: 11 });
+  eq('class renamed', renamed.name, 'Senior 11-12');
 
   const noName = await expectError(() => ctx.api('classes:create', { name: '   ' }));
   check('blank class name rejected', !!noName, String(noName));
@@ -913,6 +1262,103 @@ section('Classes & subjects CRUD', async (ctx) => {
     });
     eq('id from list is usable for update', Number(roundTrip.id), Number(gradesOwned.id));
   }
+});
+
+/* =================================================================== */
+/* 13. Classes follow student registration automatically              */
+/* =================================================================== */
+
+section('Classes auto-sync with the roster', async (ctx) => {
+  const names = async () => (await ctx.api('classes:list', {})).map((c) => c.name);
+  const hasClass = async (name) => (await names()).some((n) => n.toLowerCase() === name.toLowerCase());
+
+  // --- created on registration -----------------------------------------
+  const nova = await ctx.api('students:create', {
+    rollNo: 'SYNC-1',
+    name: 'Sync One',
+    studentClass: 'Play Group',
+  });
+  check('class created on student registration', await hasClass('Play Group'));
+
+  // Case differences must reuse the existing row, not fork a duplicate.
+  await ctx.api('students:create', { rollNo: 'SYNC-2', name: 'Sync Two', studentClass: 'play group' });
+  const dupes = (await names()).filter((n) => n.toLowerCase() === 'play group');
+  eq('same class in different case is not duplicated', dupes.length, 1);
+
+  // --- grade order appended, not first --------------------------------
+  const pg = (await ctx.api('classes:list', {})).find((c) => c.name === 'Play Group');
+  check('auto class gets a sort order', Number.isFinite(Number(pg.gradeOrder)), JSON.stringify(pg));
+
+  // --- created on edit move, and the old class pruned -------------------
+  // "Play Group" still holds SYNC-2, so it must survive this move; the move
+  // into "Nursery" creates that one instead.
+  const beforeMove = (await ctx.api('classes:list', {})).length;
+  await ctx.api('students:update', {
+    id: nova.id,
+    rollNo: 'SYNC-1',
+    name: 'Sync One',
+    studentClass: 'Nursery',
+  });
+  check('class created when a student is moved into it', await hasClass('Nursery'));
+  check('old class kept while another student remains', await hasClass('Play Group'));
+  eq('moving between classes adds exactly one', (await ctx.api('classes:list', {})).length, beforeMove + 1);
+
+  // Removing the last "Play Group" student prunes the class.
+  await ctx.api('students:remove', {
+    id: (await ctx.qall("SELECT id FROM students WHERE studentClass = 'play group'"))[0].id,
+  });
+  check('old class removed once its last student left', !(await hasClass('Play Group')));
+  eq('pruning keeps the class count stable', (await ctx.api('classes:list', {})).length, beforeMove);
+
+  // --- a class with students left survives ------------------------------
+  await ctx.api('students:create', { rollNo: 'SYNC-3', name: 'Sync Three', studentClass: 'Kinder' });
+  await ctx.api('students:create', { rollNo: 'SYNC-4', name: 'Sync Four', studentClass: 'Kinder' });
+  await ctx.api('students:remove', { id: (await ctx.qall("SELECT id FROM students WHERE rollNo = 'SYNC-4'"))[0].id });
+  check('class kept while another student remains', await hasClass('Kinder'));
+  const kinderLeft = await ctx.qall("SELECT id FROM students WHERE studentClass = 'Kinder'");
+  eq('one Kinder student remains', kinderLeft.length, 1);
+  await ctx.api('students:remove', { id: kinderLeft[0].id });
+  check('class removed with its last student', !(await hasClass('Kinder')));
+
+  // --- rename propagates everywhere ------------------------------------
+  const alice = await ctx.q1("SELECT id FROM students WHERE rollNo = 'A-001' LIMIT 1");
+  const aliceBefore = await ctx.q1('SELECT studentClass FROM students WHERE id = ?', [alice.id]);
+  const oldName = aliceBefore.studentClass;
+  const target = (await ctx.api('classes:list', {})).find((c) => c.name === oldName);
+  check('roster class is a configured class', !!target, JSON.stringify(aliceBefore));
+
+  await ctx.api('classes:update', { id: target.id, name: 'Class 1 (Renamed)', gradeOrder: target.gradeOrder });
+  const aliceAfter = await ctx.q1('SELECT studentClass FROM students WHERE id = ?', [alice.id]);
+  eq('rename follows the student', aliceAfter.studentClass, 'Class 1 (Renamed)');
+
+  const inv = await ctx.q1('SELECT COUNT(*) AS c FROM invoices WHERE studentClass = ?', [oldName]);
+  eq('no invoices left on the old name', inv.c, 0);
+  const invNew = await ctx.q1('SELECT COUNT(*) AS c FROM invoices WHERE studentClass = ?', ['Class 1 (Renamed)']);
+  check('invoices moved to the new name', invNew.c > 0, 'count=' + invNew.c);
+
+  // subjects.className is a ', ' separated list of class names, so a rename has
+  // to rewrite the matching token rather than drop the whole row.
+  const stale = await ctx.qall('SELECT name, className FROM subjects');
+  check(
+    'no subject still names the old class',
+    stale.every((s) => !String(s.className).split(',').some((n) => n.trim().toLowerCase() === oldName.toLowerCase())),
+    JSON.stringify(stale.map((s) => [s.name, s.className])),
+  );
+  check(
+    'renamed class appears on the subjects assigned to it',
+    stale.some((s) => String(s.className).includes('Class 1 (Renamed)')),
+    JSON.stringify(stale.map((s) => [s.name, s.className])),
+  );
+
+  // The assignment itself lives in the junction table and is keyed by class id,
+  // so it must survive the rename untouched.
+  const renamedSubjects = await ctx.api('grades:list-subjects', { studentClass: 'Class 1 (Renamed)' });
+  check('subjects still resolve under the new name', renamedSubjects.length > 0, renamedSubjects.map((s) => s.name).join('|'));
+  check(
+    'resolved subjects report the new class name',
+    renamedSubjects.every((s) => (s.classNames || []).some((n) => n === 'Class 1 (Renamed)')),
+    JSON.stringify(renamedSubjects.map((s) => [s.name, s.classNames])),
+  );
 });
 
 /* =================================================================== */

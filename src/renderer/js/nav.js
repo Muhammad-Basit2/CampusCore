@@ -11,7 +11,11 @@ const VIEWS = {
   dashboard: { title: 'Dashboard', subtitle: 'Overview of your school', render: () => Dashboard.load() },
   students: { title: 'Students', subtitle: 'Manage student records', render: () => Students.load() },
   fees: { title: 'Fee & Invoicing', subtitle: 'Create invoices and record payments', render: () => Fees.load() },
-  grades: { title: 'Grades & Reports', subtitle: 'Enter marks and print report cards', render: () => Grades.load() },
+  grades: {
+    title: 'Grades & Reports',
+    subtitle: 'Enter marks and print report cards',
+    render: (params) => Grades.load(params),
+  },
   settings: { title: 'Settings', subtitle: 'School profile, branding and printing', render: () => Settings.load() },
 };
 
@@ -19,8 +23,34 @@ const Nav = {
   current: 'dashboard',
   params: {},
 
+/**
+   * Grades & Reports context.
+   *
+   * The view used to own its own class dropdown; class selection now belongs to
+   * the sidebar tree, so the router has to remember which category and class the
+   * user drilled into and hand them to Grades on every render.
+   */
+  grades: { categoryKey: '', classId: null },
   init() {
-    on($('#nav'), 'click', '.nav-item', (e, btn) => this.go(btn.dataset.view));
+    on($('#nav'), 'click', '.nav-item', (e, btn) => {
+      // Grades is a tree with a landing page behind it rather than a plain
+      // destination, so its header has its own handler instead of just going to
+      // the view; the two cannot share one call or the tree never opens.
+      if (btn.dataset.view === 'grades') return this.openGrades();
+      this.go(btn.dataset.view);
+    });
+    on($('#nav'), 'click', '.nav-cat', (e, btn) => this.toggleGroup(btn));
+    on($('#nav'), 'click', '.nav-class', (e, btn) => this.selectClass(btn));
+    // "Grades & Reports" in the breadcrumb drops back to the un-scoped landing
+    // page and re-opens the tree, so the crumb is the way out of a class.
+    $('#crumbs').addEventListener('click', (e) => {
+      if (!e.target.closest('[data-crumb="view"]')) return;
+      this.grades.classId = null;
+      this.grades.categoryKey = '';
+      this.toggleTree(true);
+      this.paintTree();
+      this.go('grades', { categoryKey: '', classId: null });
+    });
     $('#sidebarToggle').addEventListener('click', () => $('#app').classList.toggle('collapsed'));
     this.bindShortcuts();
 
@@ -28,6 +58,145 @@ const Nav = {
     window.api.on('nav:goto', (view) => this.go(view));
     window.api.on('nav:help', () => this.showShortcuts());
     window.api.on('app:error', (message) => notify.error('Application error', message));
+  },
+/* ------------------------------------------------------------------ */
+  /* Grades tree                                                         */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * The Grades sidebar header: opens the view and the tree in one click.
+   *
+   * Both halves matter. The tree is only meaningful next to the landing page,
+   * and it is built from the classes table, so it has to be populated before the
+   * first paint rather than after Grades.load() settles. Building it here (and
+   * not only in the view) is what stops a first click landing on an empty tree.
+   */
+  async openGrades() {
+    this.toggleTree(true);
+    await this.buildTree();
+    // A class that is already selected keeps its scope; otherwise the view
+    // falls back to its "pick a class" landing page.
+    await this.go('grades', {
+      categoryKey: this.grades.categoryKey,
+      classId: this.grades.classId,
+    });
+  },
+
+  /**
+   * Rebuilds the category / class tree from the classes table.
+   *
+   * Classes are grouped by the same gradeOrder bands the Subjects tab uses, so a
+   * class sits under exactly one heading and the sidebar and the picker can never
+   * disagree about which category a class belongs to. Classes come and go as
+   * students are registered, so the tree is rebuilt on every grades load rather
+   * than only at boot.
+   */
+  async buildTree() {
+    const host = $('#navGradesChildren');
+    if (!host) return;
+
+    let classes = [];
+    try {
+      classes = await window.api.classes.list();
+    } catch (err) {
+      host.innerHTML = '';
+      return;
+    }
+
+    this.treeClasses = classes;
+    const groups = groupClassesByCategory(classes);
+    if (!groups.length) {
+      host.innerHTML = '<div class="nav-note">No classes yet</div>';
+      return;
+    }
+
+    host.innerHTML = groups
+      .map((group) => `
+        <div class="nav-cat-group" data-cat="${esc(group.key)}">
+          <button class="nav-cat" data-cat="${esc(group.key)}" aria-expanded="false">
+            <span class="nav-caret" aria-hidden="true">&#9656;</span>
+            <span class="nav-cat-label">${esc(group.label)}</span>
+            <span class="nav-cat-count">${group.classes.length}</span>
+          </button>
+          <div class="nav-cat-body">
+            ${group.classes
+              .map(
+                (c) => `
+              <button class="nav-class" data-class-id="${c.id}" data-cat="${esc(group.key)}"
+                      title="${esc(group.label)} &middot; ${esc(c.name)}">
+                <span class="nav-dot" aria-hidden="true"></span>
+                <span class="nav-label">${esc(c.name)}</span>
+              </button>`,
+              )
+              .join('')}
+          </div>
+        </div>`)
+      .join('');
+
+    this.paintTree();
+  },
+
+  /** Opens or closes the whole grades tree. */
+  toggleTree(force) {
+    const btn = $('#navGrades .nav-item');
+    const open = force === undefined ? !this.treeOpen : force;
+    this.treeOpen = open;
+    $('#navGrades').classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', String(open));
+  },
+
+  /** Expands one category, collapsing the others so the tree stays scannable. */
+  toggleGroup(btn, force) {
+    if (!btn) return;
+    const open = force === undefined ? btn.getAttribute('aria-expanded') !== 'true' : force;
+    $$('.nav-cat').forEach((other) => {
+      if (other === btn) return;
+      other.setAttribute('aria-expanded', 'false');
+      const wrap = other.closest('.nav-cat-group');
+      if (wrap) wrap.classList.remove('open');
+    });
+    btn.setAttribute('aria-expanded', String(open));
+    const wrap = btn.closest('.nav-cat-group');
+    if (wrap) wrap.classList.toggle('open', open);
+  },
+
+  /** Selects a class, scoping the grades view to it. */
+  async selectClass(btn) {
+    this.grades.categoryKey = btn.dataset.cat;
+    this.grades.classId = Number(btn.dataset.classId);
+    await this.go('grades', {
+      categoryKey: this.grades.categoryKey,
+      classId: this.grades.classId,
+    });
+  },
+
+  /** The category label a class id sits under, or null when it is not in the tree. */
+  categoryOf(classId) {
+    const group = groupClassesByCategory(this.treeClasses || [])
+      .find((g) => g.classes.some((c) => Number(c.id) === Number(classId)));
+    return group ? { key: group.key, label: group.label } : null;
+  },
+
+  /** The class row for a class id, or null when the tree has not loaded it. */
+  classOf(classId) {
+    return (this.treeClasses || []).find((c) => Number(c.id) === Number(classId)) || null;
+  },
+
+  /**
+   * Highlights the active row and opens the branch that contains it.
+   *
+   * The active class is scrolled into view too, because with a dozen classes the
+   * selected one is routinely below the fold in a long sidebar.
+   */
+  paintTree() {
+    $$('.nav-class').forEach((btn) => {
+      btn.classList.toggle('active', Number(btn.dataset.classId) === Number(this.grades.classId));
+    });
+    const active = $('.nav-class.active');
+    if (active) {
+      this.toggleGroup($('.nav-cat[data-cat="' + active.dataset.cat + '"]'), true);
+      active.scrollIntoView({ block: 'nearest' });
+    }
   },
 
   /** Switches the active view, updating sidebar, topbar and content. */
@@ -48,18 +217,50 @@ const Nav = {
 
     $('#viewTitle').textContent = def.title;
     $('#viewSubtitle').textContent = def.subtitle;
+    this.setCrumbs(view, params);
 
     try {
-      await def.render();
+      await def.render(params);
     } catch (err) {
       notify.error(`Could not load ${def.title}`, err.message);
     }
   },
 
+  /**
+   * Renders the breadcrumb trail under the topbar title.
+   *
+   * Only Grades has more than one level, so every other view clears the trail
+   * instead of leaving the previous section's path on screen.
+   */
+  setCrumbs(view, params) {
+    const host = $('#crumbs');
+    if (!host) return;
+
+    if (view !== 'grades' || !params.classId) {
+      host.innerHTML = '';
+      host.classList.remove('active');
+      return;
+    }
+
+    const category = this.categoryOf(params.classId);
+    const cls = this.classOf(params.classId);
+    host.classList.add('active');
+    host.innerHTML = `
+      <button class="crumb" data-crumb="view" type="button">Grades &amp; Reports</button>
+      <span class="crumb-sep" aria-hidden="true">&rsaquo;</span>
+      ${
+        category
+          ? `<span class="crumb-static">${esc(category.label)}</span>` +
+            '<span class="crumb-sep" aria-hidden="true">&rsaquo;</span>'
+          : ''
+      }
+      <span class="crumb-current" aria-current="page">${esc(cls ? cls.name : 'Class')}</span>`;
+  },
+
   /** Reloads the active view (used after a data:changed push). */
   async refresh() {
     const def = VIEWS[this.current];
-    if (def) await def.render();
+    if (def) await def.render(this.current === 'grades' ? Nav.params : {});
   },
 
   /**

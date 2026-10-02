@@ -29,6 +29,8 @@ const Students = {
             <input type="search" id="studentSearch" placeholder="Search name, roll no or class..."
                    value="${esc(this.search)}" />
             <button class="btn primary" id="addStudent">+ New student</button>
+            <button class="btn" id="expStudents" title="Export roster to Excel">&#128229; Export</button>
+            <button class="btn" id="impStudents" title="Import students from Excel">&#128202; Import</button>
           </div>
         </div>
         <div class="card-body tight">
@@ -89,6 +91,32 @@ const Students = {
     });
 
     $('#addStudent', view).addEventListener('click', () => this.openForm());
+
+    $('#expStudents', view).addEventListener('click', async () => {
+      try {
+        const result = await window.api.data.exportStudents();
+        if (result.ok) notify.ok('Exported', result.rows + ' student(s) exported to Excel.');
+      } catch (err) {
+        notify.error('Export failed', err.message);
+      }
+    });
+
+    $('#impStudents', view).addEventListener('click', async (e) => {
+      await withBusy(e.currentTarget, async () => {
+        const result = await window.api.data.importStudentsDialog();
+        if (!result) return;                       // dialog cancelled
+        const parts = [
+          result.created ? result.created + ' student(s) added' : null,
+          result.updated ? result.updated + ' updated' : null,
+          result.skipped ? result.skipped + ' skipped' : null,
+        ].filter(Boolean);
+        notify.ok(
+          'Import complete',
+          parts.length ? parts.join(', ') + '.' : 'No rows were imported.',
+        );
+        await this.load();
+      });
+    });
 
     on(view, 'click', 'button[data-act]', async (e, btn) => {
       const student = this.rows.find((r) => r.id === Number(btn.dataset.id));

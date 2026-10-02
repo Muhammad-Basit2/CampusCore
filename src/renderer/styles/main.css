@@ -36,22 +36,114 @@ body {
 .app { display: grid; grid-template-columns: 258px 1fr; height: 100vh; }
 .app.collapsed { grid-template-columns: 68px 1fr; }
 
-/* ============================== GRADES CLASS PILLS =========================== */
-.class-bar {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+/* ============================== GRADES TOOLBAR =========================== */
+/* One toolbar owns class selection, exam selection and the tab strip, so the
+   exam name is one shared control instead of a per-tab field behind a button. */
+.gr-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  background: linear-gradient(180deg, var(--panel), rgba(22, 32, 58, 0.6));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
-.class-pills { display: flex; gap: 8px; flex-wrap: wrap; }
-.class-pill {
-  padding: 7px 16px; border-radius: 999px; font-size: 13px; font-weight: 600;
-  background: var(--panel); color: var(--muted); border: 1px solid var(--line);
-  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+.gr-toolbar-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
 }
-.class-pill:hover { background: rgba(79, 140, 255, 0.15); color: var(--text); }
-.class-pill.active {
-  background: linear-gradient(90deg, rgba(79, 140, 255, 0.35), rgba(124, 92, 255, 0.25));
-  border-color: rgba(124, 150, 255, 0.6); color: var(--text);
+.gr-toolbar-tabs { justify-content: space-between; }
+.gr-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.gr-field-grow { flex: 1 1 260px; }
+.gr-field > label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.gr-exam { display: flex; }
+.gr-exam input {
+  width: 100%;
+  max-width: 340px;
+}
+.gr-toolbar .tabs { margin-left: 0; }
+.gr-toolbar .tab { white-space: nowrap; }
+
+/* Marks-entry and results toolbar helpers. */
+.gr-search { display: flex; }
+.gr-search input { width: 240px; max-width: 100%; }
+.gr-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--muted);
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s, border-color 0.15s;
+}
+.gr-toggle:hover { color: var(--text); border-color: rgba(124, 150, 255, 0.5); }
+.gr-toggle input { width: 15px; height: 15px; accent-color: var(--brand); cursor: pointer; }
+.gr-toggle:has(input:checked) {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.12);
+}
+.gr-hint { font-size: 12px; color: var(--muted); }
+.gr-hint kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
 }
 
+/* Result sheet: one column per subject, so a weak area is visible at a glance.
+   The failing subjects are tinted rather than relying on colour alone. */
+table.res-table { min-width: 980px; }
+table.res-table th, table.res-table td { white-space: nowrap; }
+table.res-table th.num { text-align: right; }
+table.res-table td.res-fail { color: #fca5a5; font-weight: 600; }
+table.res-table td.muted { color: var(--muted); }
+
+/* ============================ CLASS SCOPE ============================= */
+/* The class dropdown this replaced has moved into the sidebar tree, so the
+   toolbar only restates the active class as a read-only scope indicator. */
+.gr-scope { gap: 6px; }
+.gr-scope-label {
+  font-size: 10.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted);
+}
+.gr-scope-name {
+  font-size: 13.5px; font-weight: 650; white-space: nowrap;
+  padding: 7px 12px; border-radius: 10px;
+  border: 1px solid rgba(124, 150, 255, 0.45);
+  background: rgba(79, 140, 255, 0.12);
+}
+.gr-scope-cat {
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  color: #a9bde6; background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px; padding: 3px 8px; white-space: nowrap;
+}
+.gr-scope-cat:empty { display: none; }
+
+/* The add-subject form shows the same scope chip instead of a class picker,
+   because a new subject is always filed under the active class. */
+.gr-assign-readonly {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px dashed var(--line);
+  border-radius: 10px; background: rgba(255, 255, 255, 0.03);
+  font-size: 13px;
+}
+.gr-field-tabs { flex: 0 0 auto; }
 /* ============================== SIDEBAR ============================== */
 .sidebar {
   background: linear-gradient(180deg, #101a30, #0c1425);
@@ -72,7 +164,7 @@ body {
 .brand-text span {
   font-size: 11px; color: var(--muted); letter-spacing: 1.4px; text-transform: uppercase;
 }
-.nav { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.nav { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
 .nav-item {
   display: flex; align-items: center; gap: 12px; width: 100%;
   padding: 11px 12px; background: transparent;
@@ -93,9 +185,64 @@ body {
   background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line);
   border-radius: 5px; padding: 2px 5px; white-space: nowrap;
 }
-.app.collapsed .nav-label, .app.collapsed .nav-item kbd,
+
+/* ------------------------- Grades & Reports tree ---------------------- */
+/* The tree is built from the classes table at runtime: categories first, then
+   the classes inside each. It scrolls inside the nav so a school with twenty
+   classes cannot push Settings off the bottom of the sidebar. */
+.nav-group { display: flex; flex-direction: column; }
+.nav-caret {
+  flex: 0 0 auto; font-size: 10px; color: var(--muted);
+  transition: transform 0.15s; margin-left: auto;
+}
+.nav-group.open > .nav-item .nav-caret,
+.nav-cat-group.open > .nav-cat .nav-caret { transform: rotate(90deg); }
+.nav-children { display: none; }
+.nav-group.open .nav-children {
+  display: block;
+  max-height: 46vh; overflow-y: auto;
+  padding: 6px 0 4px 8px; margin-bottom: 4px;
+  border-left: 1px solid rgba(255, 255, 255, 0.09);
+  margin-left: 22px;
+}
+.nav-note { padding: 8px 12px; font-size: 12px; color: var(--muted); }
+
+.nav-cat, .nav-class {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: transparent; border: 1px solid transparent; border-radius: 9px;
+  color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; text-align: left;
+  transition: background 0.15s;
+}
+.nav-cat { padding: 7px 10px; color: #c3d0ea; font-weight: 600; }
+.nav-cat .nav-caret { margin-left: 0; }
+.nav-cat:hover, .nav-class:hover { background: rgba(79, 140, 255, 0.12); }
+.nav-cat:focus-visible, .nav-class:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.nav-cat-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-cat-count {
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  background: rgba(255, 255, 255, 0.06); border-radius: 999px; padding: 1px 7px;
+}
+.nav-cat-body { display: none; padding: 2px 0 6px; }
+.nav-cat-group.open .nav-cat-body { display: block; }
+.nav-class { padding: 6px 10px; color: #9fb0cf; }
+.nav-class .nav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-dot {
+  flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+}
+.nav-class.active {
+  background: linear-gradient(90deg, rgba(79, 140, 255, 0.34), rgba(124, 92, 255, 0.16));
+  border-color: rgba(124, 150, 255, 0.45);
+  color: #fff; font-weight: 600;
+}
+.nav-class.active .nav-dot { background: #7c9cff; box-shadow: 0 0 8px rgba(124, 156, 255, 0.8); }
+
+/* Collapsed rail: the tree has nowhere to go, so it is hidden with the labels
+   rather than spilling an icon-less list down the sidebar. */
+.app.collapsed .nav-children, .app.collapsed .nav-label, .app.collapsed .nav-item kbd,
 .app.collapsed .brand-text, .app.collapsed .sidebar-foot { display: none; }
 .app.collapsed .nav-item { justify-content: center; }
+.app.collapsed .nav-caret { display: none; }
 .sidebar-foot { border-top: 1px solid var(--line); padding-top: 12px; }
 .kbd-hint { color: var(--muted); font-size: 11px; line-height: 1.8; }
 .db-path {
@@ -114,6 +261,25 @@ body {
 .topbar-title h2 { margin: 0; font-size: 20px; font-weight: 650; }
 .topbar-title p { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
 .topbar-right { display: flex; gap: 8px; align-items: center; }
+
+/* Breadcrumb trail: only Grades is more than one level deep, so the element is
+   empty (and display:none via .active) on every other view. */
+.crumbs { display: none; }
+.crumbs.active { display: flex; }
+.crumbs.active {
+  align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px;
+  font-size: 12.5px; color: var(--muted);
+}
+.crumb {
+  background: transparent; border: none; padding: 0; cursor: pointer;
+  color: #a9bde6; font: inherit; font-size: 12.5px; text-decoration: underline;
+  text-underline-offset: 3px; text-decoration-color: rgba(169, 189, 230, 0.4);
+}
+.crumb:hover { color: #fff; }
+.crumb:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+.crumb-sep { color: #5c6d8f; }
+.crumb-static { color: var(--muted); }
+.crumb-current { color: var(--text); font-weight: 600; }
 
 /* =============================== CARDS ============================== */
 .card {
@@ -483,7 +649,8 @@ table.marks tr.is-active td { background: rgba(124, 92, 255, 0.18); }
 
 @media (max-width: 900px) {
   .app { grid-template-columns: 68px 1fr; }
-  .app .nav-label, .app .nav-item kbd, .app .brand-text, .app .sidebar-foot { display: none; }
+  .app .nav-label, .app .nav-item kbd, .app .brand-text, .app .sidebar-foot,
+  .app .nav-children { display: none; }
   .view { padding: 16px; }
 }
 
@@ -504,6 +671,166 @@ thead th {
 }
 tbody td { padding: 10px 14px; border-bottom: 1px solid rgba(38, 54, 92, 0.55); vertical-align: middle; }
 tbody tr { cursor: pointer; }
+
+/* ========================= CLASS CHECKBOXES ========================= */
+.class-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 13px;
+}
+.checkbox-item:hover {
+  background: rgba(79, 140, 255, 0.1);
+}
+.checkbox-item input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--brand);
+}
+.checkbox-item span {
+  flex: 1;
+}
+
+/* ========================= CLASS PICKER GROUPS ========================= */
+/* Classes are listed under their category, each block with a Select All in the
+   header. The whole picker scrolls as one box so a school with thirty classes
+   does not push the Add subject button off the card. */
+.class-picker {
+  gap: 10px;
+  padding: 8px;
+}
+.class-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.class-group-head {
+  padding: 2px 4px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.class-group-all {
+  font-weight: 700;
+  padding: 5px 6px;
+}
+.class-group-label {
+  flex: 1;
+  letter-spacing: 0.2px;
+}
+.class-group-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-variant-numeric: tabular-nums;
+}
+.class-group-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+}
+/* Inside a group the classes read as compact chips rather than full-width rows,
+   so a band of ten is still two lines instead of ten. */
+.class-group-body .checkbox-item {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.class-group-body .checkbox-item:has(input:checked) {
+  background: rgba(79, 140, 255, 0.12);
+  border-color: rgba(79, 140, 255, 0.4);
+}
+
+/* Inside the Edit Subject modal the picker gets the full dialog width, which is
+   more than one column of chips can use: laying the categories out in a grid
+   keeps a large roster from turning into a long single column that pushes the
+   Save button below the fold. Narrow modals keep the single-column flow. */
+.modal .class-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  align-items: start;
+  max-height: min(40vh, 340px);
+  overflow: auto;
+}
+/* The automatic-categorisation note sits under the picker and is the answer to
+   "where is the category I choose?". It is informational, so it is dimmed. */
+.modal .auto-cat-hint {
+  display: block;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--bg-soft);
+}
+
+/* ========================= CLASS BADGES ========================= */
+/* The CLASS column shows one pill per category the subject is taught in, so a
+   wide assignment reads as "Primary, High School" rather than a count the
+   teacher has to expand. */
+td.class-cell {
+  display: table-cell;
+  vertical-align: middle;
+}
+td.class-cell .cat-pill {
+  margin: 2px 4px 2px 0;
+}
+.cat-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(79, 140, 255, 0.15);
+  color: var(--brand);
+  border: 1px solid rgba(79, 140, 255, 0.3);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A partly covered category: the note names the classes it does cover, and the
+   dashed edge signals it is not the whole band. */
+.cat-pill.partial {
+  background: rgba(245, 158, 11, 0.14);
+  color: #fcd34d;
+  border: 1px dashed rgba(245, 158, 11, 0.5);
+}
+.cat-pill.other {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.4);
+}
+.cat-pill-note {
+  font-weight: 500;
+  opacity: 0.85;
+}
 tbody tr:hover { background: rgba(79, 140, 255, 0.09); }
 tbody tr.selected, tbody tr.is-active {
   background: rgba(124, 92, 255, 0.2); box-shadow: inset 3px 0 0 var(--brand);
@@ -540,27 +867,3 @@ td.actions { text-align: right; white-space: nowrap; }
 .view { display: none; height: 100%; overflow: auto; padding: 22px 26px 40px; }
 .view.active { display: block; }
 
-/* ============================== ADD CLASS BUTTON =========================== */
-.add-class-btn {
-  padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 600;
-  background: rgba(79, 140, 255, 0.12); color: var(--brand); border: 1px dashed var(--brand);
-  cursor: pointer; transition: all 0.15s; white-space: nowrap;
-}
-.add-class-btn:hover { background: rgba(79, 140, 255, 0.22); }
-.add-class-form { display: flex; align-items: center; gap: 6px; }
-.add-class-input {
-  padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500;
-  background: var(--panel); color: var(--text); border: 1px solid var(--brand);
-  width: 140px; outline: none;
-}
-.add-class-input:focus { box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.18); }
-.add-class-save {
-  padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
-  background: var(--brand); color: #fff; border: none; cursor: pointer;
-}
-.add-class-save:hover { opacity: 0.85; }
-.add-class-cancel {
-  padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: 600;
-  background: var(--danger); color: #fff; border: none; cursor: pointer;
-}
-.add-class-cancel:hover { opacity: 0.85; }

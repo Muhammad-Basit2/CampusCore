@@ -83,6 +83,16 @@ const api = {
     remove: (payload) => invoke('subjects:remove', payload),
   },
 
+  /* ---------------- data import / export ---------------- */
+  data: {
+    exportStudents: () => invoke('data:export-students'),
+    exportInvoices: () => invoke('data:export-invoices'),
+    exportMarks: (payload) => invoke('data:export-marks', payload),
+    exportClassesSubjects: () => invoke('data:export-classes-subjects'),
+    importStudentsDialog: () => invoke('data:import-students-dialog'),
+    importMarksDialog: (examName) => invoke('data:import-marks-dialog', { examName }),
+  },
+
   /* ---------------- push events from main ---------------- */
   on: (event, callback) => {
     const allowed = ['nav:goto', 'nav:help', 'app:error', 'data:changed'];

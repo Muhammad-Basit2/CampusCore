@@ -47,7 +47,11 @@ const Fees = {
       </div>
 
       <div class="card mt">
-        <div class="card-head"><h3>Invoices</h3></div>
+        <div class="card-head"><h3>Invoices</h3>
+          <div class="search-row no-print">
+            <button class="btn" id="expInvoices" title="Export invoices to Excel">&#128229; Export</button>
+          </div>
+        </div>
         <div class="card-body">
           <div class="search-row no-print">
             <input type="search" id="invoiceSearch" placeholder="Search invoice no, student or roll no..."
@@ -82,6 +86,15 @@ const Fees = {
       </div>`;
 
     this.bind(view);
+
+    $('#expInvoices', view).addEventListener('click', async () => {
+      try {
+        const result = await window.api.data.exportInvoices();
+        if (result.ok) notify.ok('Exported', result.rows + ' invoice(s) exported to Excel.');
+      } catch (err) {
+        notify.error('Export failed', err.message);
+      }
+    });
   },
 
   row(r) {

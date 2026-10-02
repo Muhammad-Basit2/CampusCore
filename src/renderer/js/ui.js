@@ -44,11 +44,57 @@ function esc(value) {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Delegated listener: `handler` runs when the event originates inside a
+ * descendant matching `selector`.
+ *
+ * Returns a disposer. Delegation is normally bound once to a container that
+ * outlives its children, but any view that re-renders itself with `innerHTML`
+ * and re-binds on each pass would stack a new listener on every render, so one
+ * click would fire the handler N times - and anything the handler notifies
+ * about would be reported N times. Callers that re-bind should either use the
+ * disposer or go through `delegateOnce` below.
+ *
+ * @returns {function():void} removes exactly the listener that was added
+ */
 function on(root, event, selector, handler) {
-  root.addEventListener(event, (e) => {
+  if (!root) return () => {};
+  const listener = (e) => {
     const target = e.target.closest(selector);
     if (target && root.contains(target)) handler(e, target);
-  });
+  };
+  root.addEventListener(event, listener);
+  return () => root.removeEventListener(event, listener);
+}
+
+/**
+ * Same as `on`, but idempotent: binding the same event + selector to the same
+ * root twice replaces the previous binding instead of adding a second one.
+ *
+ * A view that rebuilds its markup on every render binds to the persistent
+ * container it renders into - `#gradesBody`, `#view-grades`. The element
+ * survives, so a plain addEventListener there is installed once per render and
+ * every click is handled N times, repeating every message it raised. Re-binding
+ * under the same key just moves the single listener to the current handler.
+ *
+ * Bindings are keyed by root *and* event+selector, so one root can carry several
+ * independent delegations without them evicting each other.
+ *
+ * @param {WeakMap} registry  shared across calls; created by the caller
+ */
+function delegateOnce(registry, root, event, selector, handler) {
+  if (!root) return () => {};
+  let byEvent = registry.get(root);
+  if (!byEvent) {
+    byEvent = new Map();
+    registry.set(root, byEvent);
+  }
+  const key = `${event}|${selector}`;
+  const previous = byEvent.get(key);
+  if (previous) previous();
+  const dispose = on(root, event, selector, handler);
+  byEvent.set(key, dispose);
+  return dispose;
 }
 
 /* ------------------------------------------------------------------ */

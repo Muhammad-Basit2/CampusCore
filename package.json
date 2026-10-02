@@ -11,6 +11,8 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "test": "electron smoke-test.js",
+    "test:ui": "electron tools/grades-ui-test.js",
+    "test:migration": "electron tools/migration-check-subjects.js",
     "test:print": "electron tools/print-page-test.js",
     "icon": "node -e \"const fs=require('fs'),sharp=require('sharp'),icojs=require('icojs'); sharp(fs.readFileSync('build/icon.png')).resize(256,256).toBuffer().then(b=>icojs.encodeIco([b]).then(d=>{const buf=Buffer.isBuffer(d)?d:Buffer.from(d); fs.writeFileSync('build/icon.ico',buf); console.log('ICO created:',buf.length,'bytes')}))\"",
     "pack": "electron-builder --dir",
@@ -18,7 +20,8 @@
     "dist:portable": "electron-builder --win portable"
   },
   "dependencies": {
-    "sqlite3": "^6.0.1"
+    "sqlite3": "^6.0.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "electron": "^32.2.7",

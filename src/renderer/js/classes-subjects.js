@@ -82,14 +82,16 @@ const ClassesSubjects = {
       ? this.classes.map((c) => this.classItem(c)).join('')
       : `<div class="empty">
            <div class="big">&#128218;</div>
-           No classes yet.<br />Add your first class category to begin.
+           No classes yet.<br />They are created automatically when you register a student.
          </div>`;
 
     return `
       <section class="card cs-classes">
         <div class="card-head">
           <h3>Classes</h3>
-          <button class="btn primary sm" id="csAddClass">+ Add Class</button>
+          <div class="search-row no-print" style="margin-top:4px">
+            <button class="btn sm" id="csExpData" title="Export all data to Excel">&#128229; Export</button>
+          </div>
         </div>
         <div class="cs-class-list">${items}</div>
         <div class="cs-class-foot">
@@ -111,7 +113,6 @@ const ClassesSubjects = {
         </div>
         <div class="cs-class-actions">
           <button class="btn sm" data-act="edit-class" data-id="${c.id}" title="Edit class">Edit</button>
-          <button class="btn sm danger" data-act="delete-class" data-id="${c.id}" title="Delete class">Delete</button>
         </div>
       </div>`;
   },
@@ -196,7 +197,14 @@ const ClassesSubjects = {
   /* ------------------------------------------------------------------ */
 
   bind(view) {
-    $('#csAddClass', view).addEventListener('click', () => this.openClassForm(null));
+    $('#csExpData', view).addEventListener('click', async () => {
+      try {
+        const result = await window.api.data.exportClassesSubjects();
+        if (result.ok) notify.ok('Exported', 'Classes, subjects & class subjects exported.');
+      } catch (err) {
+        notify.error('Export failed', err.message);
+      }
+    });
 
     const search = $('#csSearch', view);
     if (search) {
@@ -221,11 +229,9 @@ const ClassesSubjects = {
 
     // Delegated handlers - one listener each instead of one per row.
     const classList = $('.cs-class-list', view);
-    on(classList, 'click', '[data-act]', (e, btn) => {
+    on(classList, 'click', '[data-act="edit-class"]', (e, btn) => {
       const target = this.classes.find((c) => c.id === Number(btn.dataset.id));
-      if (!target) return;
-      if (btn.dataset.act === 'edit-class') this.openClassForm(target);
-      else this.deleteClass(target);
+      if (target) this.openClassForm(target);
     });
 
     on(classList, 'click', '.cs-class-row', (e, row) => {
@@ -252,21 +258,24 @@ const ClassesSubjects = {
     this.render();
   },
   /* ------------------------------------------------------------------ */
-  /* Class CRUD                                                          */
+  /* Class editing                                                       */
   /* ------------------------------------------------------------------ */
 
-  /** Add/edit dialog. `existing` is null when creating. */
+  /**
+   * Rename / re-order dialog. Classes are never created or deleted from here -
+   * they appear and disappear with the students registered in them - so this
+   * form is edit-only. A rename cascades to every student, invoice, mark and
+   * grades subject in the old class (see renameClassEverywhere in ipc.js).
+   */
   openClassForm(existing) {
     const editing = !!(existing && existing.id);
-    const suggestedOrder = this.classes.length
-      ? Math.max(...this.classes.map((c) => Number(c.gradeOrder))) + 1
-      : 1;
+    if (!editing) return;
 
     this.busy = true;
     openModal((close) =>
       el('div', { class: 'modal narrow' }, [
         el('div', { class: 'modal-head' }, [
-          el('h3', { text: editing ? 'Edit class' : 'Add class' }),
+          el('h3', { text: 'Edit class' }),
         ]),
         el('div', { class: 'modal-body' }, [
           el('div', { class: 'form-grid' }, [
@@ -274,11 +283,14 @@ const ClassesSubjects = {
               el('label', { for: 'cs_className', text: 'Class name' }),
               el('input', {
                 id: 'cs_className',
-                value: editing ? existing.name : '',
+                value: existing.name,
                 maxlength: '120',
                 placeholder: 'e.g. Class 10',
               }),
-              el('span', { class: 'hint', text: 'Shown everywhere a class is picked.' }),
+              el('span', {
+                class: 'hint',
+                text: 'Renaming updates every student, invoice and mark in this class.',
+              }),
             ]),
             el('div', { class: 'field' }, [
               el('label', { for: 'cs_gradeOrder', text: 'Sort order' }),
@@ -286,7 +298,7 @@ const ClassesSubjects = {
                 id: 'cs_gradeOrder',
                 type: 'number',
                 min: '0',
-                value: editing ? String(existing.gradeOrder) : String(suggestedOrder),
+                value: String(existing.gradeOrder),
               }),
               el('span', { class: 'hint', text: 'Lower numbers sort first.' }),
             ]),
@@ -296,7 +308,7 @@ const ClassesSubjects = {
           el('button', { class: 'btn ghost', text: 'Cancel', onClick: close }),
           el('button', {
             class: 'btn primary',
-            text: editing ? 'Save changes' : 'Add class',
+            text: 'Save changes',
             onClick: (e) =>
               withBusy(e.currentTarget, async () => {
                 let saved = false;
@@ -346,37 +358,17 @@ const ClassesSubjects = {
       return false;
     }
 
-    if (existing && existing.id) {
-      await window.api.classes.update({ id: existing.id, name, gradeOrder: order });
-      notify.ok('Class updated', name + ' has been saved.');
-    } else {
-      const created = await window.api.classes.create({ name, gradeOrder: order });
-      this.activeId = created.id;
-      notify.ok('Class added', name + ' is ready for subjects.');
-    }
+    const renamed = name.toLowerCase() !== existing.name.toLowerCase();
+    await window.api.classes.update({ id: existing.id, name, gradeOrder: order });
+    notify.ok(
+      'Class updated',
+      renamed
+        ? name + ' has been renamed. Students, invoices and marks moved with it.'
+        : name + ' has been saved.',
+    );
 
     close();
     return true;
-  },
-
-  async deleteClass(target) {
-    const isActive = this.activeId === target.id;
-    const count = isActive ? this.subjects.length : 0;
-    const ok = await confirmDialog({
-      title: 'Delete class',
-      message: 'Delete ' + target.name + '?',
-      detail: count
-        ? count + ' subject(s) in this class will be deleted as well. This cannot be undone.'
-        : 'All subjects in this class will be deleted with it. This cannot be undone.',
-      confirmText: 'Delete class',
-      danger: true,
-    });
-    if (!ok) return;
-
-    await window.api.classes.remove(target.id);
-    if (isActive) this.activeId = null;
-    notify.ok('Class deleted', target.name + ' and its subjects have been removed.');
-    await this.load();
   },
   /* ------------------------------------------------------------------ */
   /* Subject CRUD                                                        */

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Grades UI harness</title>
+    <link rel="stylesheet" href="../src/renderer/styles/main.css" />
+  </head>
+  <body>
+    <!-- Mirrors the real index.html skeleton the Grades view depends on, plus the
+         sidebar tree and breadcrumb host so Nav can be exercised for real. -->
+    <div class="app" id="app">
+      <aside class="sidebar no-print" id="sidebar">
+        <nav class="nav" id="nav">
+          <button class="nav-item active" data-view="dashboard"><span class="nav-label">Dashboard</span></button>
+          <div class="nav-group" id="navGrades">
+            <button class="nav-item" data-view="grades" aria-expanded="false" aria-controls="navGradesChildren">
+              <span class="nav-label">Grades &amp; Reports</span>
+              <span class="nav-caret" aria-hidden="true">&#9656;</span>
+            </button>
+            <div class="nav-children" id="navGradesChildren"></div>
+          </div>
+        </nav>
+      </aside>
+      <main class="main">
+        <header class="topbar no-print">
+          <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar">&#9776;</button>
+          <div class="topbar-title">
+            <h2 id="viewTitle">Dashboard</h2>
+            <p id="viewSubtitle">Overview of your school</p>
+            <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
+          </div>
+        </header>
+        <div class="views" id="views">
+          <section class="view" id="view-dashboard" data-view="dashboard"></section>
+          <section class="view active" id="view-grades" data-view="grades"></section>
+        </div>
+      </main>
+    </div>
+    <div id="printRoot" class="print-root no-print"></div>
+    <div class="toast-stack no-print" id="toastStack" aria-live="polite"></div>
+    <div class="modal-backdrop no-print" id="modalBackdrop" hidden></div>
+
+    <!-- The real scripts, loaded in the same order as index.html. -->
+    <script src="../src/renderer/js/ui.js"></script>
+    <script src="../src/renderer/js/nav.js"></script>
+    <script src="../src/renderer/js/grades.js"></script>
+    <script src="./grades-ui-cases.js"></script>
+  </body>
+</html>

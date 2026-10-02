@@ -17,9 +17,17 @@ const { app } = require('electron');
 /** @type {import('sqlite3').Database | null} */
 let db = null;
 
-// Subjects are configurable per class. className stores either a real class
-// name or this wildcard, meaning "applies to every class". A class-specific row
-// always takes precedence over the wildcard for that class.
+// Subjects are always assigned to one or more real classes. The assignments
+// live in the subject_classes junction table; subjects.className (a comma
+// separated list of class names) and subjects.classIds (a JSON array of class
+// ids) are a denormalised copy kept for cheap reads and the Excel export.
+//
+// '*' is NOT a user facing concept any more - there is no "shared subject" that
+// silently applies to every class. It only survives as the legacy marker on rows
+// written before classes were explicit, and as the marker used while seeding a
+// brand new database. migrateClassSubjects()/attachUnassignedSubjects() turn
+// those rows into real assignments, so a subject never stays classless as soon
+// as one class exists.
 const WILDCARD_CLASS = '*';
 
 /** Single-quotes a literal for inline use in DDL (never for user data). */
@@ -96,14 +104,12 @@ CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoiceId);
 CREATE TABLE IF NOT EXISTS subjects (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT    NOT NULL COLLATE NOCASE,
-  className  TEXT    NOT NULL DEFAULT '*',
+  className  TEXT    NOT NULL DEFAULT '',   -- denormalised ', ' separated class names
+  classIds   TEXT    NOT NULL DEFAULT '[]', -- denormalised JSON array of class ids
   maxMarks   REAL    NOT NULL DEFAULT 100,
   sortOrder  INTEGER NOT NULL DEFAULT 0,
   createdAt  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
--- NB: the UNIQUE (name, className) index is created by migrateClassSubjects()
--- rather than here, because SCHEMA also runs against legacy databases whose
--- subjects table still has the old shape at this point.
 
 CREATE TABLE IF NOT EXISTS classes (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,6 +129,18 @@ CREATE TABLE IF NOT EXISTS class_subjects (
   UNIQUE (classId, name COLLATE NOCASE)
 );
 CREATE INDEX IF NOT EXISTS idx_class_subjects_class ON class_subjects(classId);
+
+-- Authoritative subject -> class assignment. subjects.className/classIds are a
+-- denormalised copy of these rows, kept for cheap reads and the Excel export.
+CREATE TABLE IF NOT EXISTS subject_classes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  subjectId  INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  classId    INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  createdAt  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+  UNIQUE (subjectId, classId)
+);
+CREATE INDEX IF NOT EXISTS idx_subject_classes_subject ON subject_classes(subjectId);
+CREATE INDEX IF NOT EXISTS idx_subject_classes_class   ON subject_classes(classId);
 
 CREATE TABLE IF NOT EXISTS marks (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,6 +275,10 @@ async function initDatabase() {
   await migrateRollNoUniqueness();
   await migrateClassSubjects();
   await seedDefaults();
+  // Rows that still carry no explicit assignment (the seeded defaults on a fresh
+  // database, legacy rows on an existing one) are attached to every class, so
+  // "no class selected" is never a state the user can reach or observe.
+  await attachUnassignedSubjects();
   if (migratedFrom) {
     console.log(`[database] carried over existing data from ${migratedFrom}`);
   }
@@ -266,10 +288,12 @@ async function initDatabase() {
 async function seedDefaults() {
   const count = await get('SELECT COUNT(*) AS c FROM subjects');
   if (!count || count.c === 0) {
+    // Seeded before any class exists, so the rows start out unassigned;
+    // attachUnassignedSubjects() links them to the classes as they appear.
     for (let i = 0; i < SEED_SUBJECTS.length; i += 1) {
       await run(
-        'INSERT OR IGNORE INTO subjects (name, className, maxMarks, sortOrder) VALUES (?, ?, ?, ?)',
-        [SEED_SUBJECTS[i], WILDCARD_CLASS, 100, i + 1],
+        'INSERT OR IGNORE INTO subjects (name, className, classIds, maxMarks, sortOrder) VALUES (?, ?, ?, ?, ?)',
+        [SEED_SUBJECTS[i], '', '[]', 100, i + 1],
       );
     }
   }
@@ -324,10 +348,11 @@ async function migrateRollNoUniqueness() {
  *
  * Two changes, both required for per-class subjects to work:
  *
- *  1. `subjects` gains a `className` column. Existing rows become '*' (the
- *     "all classes" wildcard) so no subject disappears from any grid, and the
- *     old global UNIQUE(name) is replaced by UNIQUE(name, className) so the
- *     same subject name may be configured differently per class.
+ *  1. `subjects` gains a `className` column. Existing rows start out with no
+ *     class and are attached to every class by attachUnassignedSubjects(), so no
+ *     subject disappears from any grid, and the old global UNIQUE(name) is
+ *     replaced by UNIQUE(name, className) so the same subject name may be
+ *     configured differently per class.
  *
  *  2. `marks` gains `studentClass`, which joins its unique key. A roll number
  *     is only unique WITHIN a class, so the old key (rollNo, subject, examName)
@@ -347,18 +372,23 @@ async function migrateClassSubjects() {
       'CREATE TABLE subjects_new (',
       '  id         INTEGER PRIMARY KEY AUTOINCREMENT,',
       '  name       TEXT    NOT NULL COLLATE NOCASE,',
-      '  className  TEXT    NOT NULL DEFAULT ' + q(WILDCARD_CLASS) + ',',
+      '  className  TEXT    NOT NULL DEFAULT ' + q('') + ',',
+      '  classIds   TEXT    NOT NULL DEFAULT ' + q('[]') + ',',
       '  maxMarks   REAL    NOT NULL DEFAULT 100,',
       '  sortOrder  INTEGER NOT NULL DEFAULT 0,',
       "  createdAt  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))",
       ')',
     ].join('\n'));
-    // '*' preserves the old behaviour: every subject applied to every class.
+    // Existing rows have no class yet. They are linked to every class by
+    // attachUnassignedSubjects(), which preserves the old behaviour without
+    // keeping a "shared with all classes" row in the data model.
     const hasCreatedAt = subjectCols.some((c) => c.name === 'createdAt');
     await run(
-      'INSERT INTO subjects_new (id, name, className, maxMarks, sortOrder, createdAt) ' +
+      'INSERT INTO subjects_new (id, name, className, classIds, maxMarks, sortOrder, createdAt) ' +
         'SELECT id, name, ' +
-          q(WILDCARD_CLASS) +
+          q('') +
+          ', ' +
+          q('[]') +
           ', maxMarks, sortOrder' +
           ', ' +
           (hasCreatedAt ? 'createdAt' : q(null)) +
@@ -366,9 +396,6 @@ async function migrateClassSubjects() {
     );
     await run('DROP TABLE subjects');
     await run('ALTER TABLE subjects_new RENAME TO subjects');
-    await exec(
-      'CREATE UNIQUE INDEX IF NOT EXISTS idx_subjects_name_class ON subjects(name, className)',
-    );
   }
 
   // --- marks: add studentClass to the key -------------------------------
@@ -407,11 +434,71 @@ async function migrateClassSubjects() {
     );
   }
 
-  // The UNIQUE (name, className) index is also needed on fresh databases, where
-  // the subjects table already has the column but the rebuild above is skipped.
+  // The junction table is the source of truth; subjects.className/classIds are
+  // denormalised and must never carry their own UNIQUE constraint — a comma-
+  // separated class list collides as soon as two subjects share the same name
+  // and the same class set. Drop any legacy index left behind by the prior build.
   await exec(
-    'CREATE UNIQUE INDEX IF NOT EXISTS idx_subjects_name_class ON subjects(name, className)',
+    "DROP INDEX IF EXISTS idx_subjects_name_class",
   );
+
+  // --- subjects: add classIds for multi-class support ----------------------
+  // Added with a usable default so no row can end up NULL: the renderer and the
+  // Excel export both parse this column unconditionally.
+  const subjCols = await all('PRAGMA table_info(subjects)');
+  if (!subjCols.some((c) => c.name === 'classIds')) {
+    await run("ALTER TABLE subjects ADD COLUMN classIds TEXT NOT NULL DEFAULT '[]'");
+    await run("UPDATE subjects SET classIds = '[]' WHERE classIds IS NULL OR classIds = ''");
+  }
+
+  // --- subject_classes junction table for multi-class assignment -----------
+  // The table is also part of SCHEMA, so on a fresh database it already exists
+  // and this is a no-op. The guard is here for databases upgraded from a build
+  // that predates the junction table.
+  const scCols = await all('PRAGMA table_info(subject_classes)');
+  if (scCols.length === 0) {
+    await exec(`
+      CREATE TABLE subject_classes (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        subjectId  INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+        classId    INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+        createdAt  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+        UNIQUE (subjectId, classId)
+      );
+      CREATE INDEX IF NOT EXISTS idx_subject_classes_subject ON subject_classes(subjectId);
+      CREATE INDEX IF NOT EXISTS idx_subject_classes_class ON subject_classes(classId);
+    `);
+  }
+
+  // Backfill the junction table from the pre-multi-class className column. The
+  // old value was a single class name, an empty string or the '*' marker; the
+  // interim multi-class build wrote a comma separated list. All three are read
+  // as a list of class names, and anything that is not a real class (including
+  // '*') is dropped - those rows are picked up by attachUnassignedSubjects().
+  const existingRows = (await all('SELECT id, className FROM subjects')) || [];
+  for (const row of existingRows) {
+    const linked = await all(
+      'SELECT classId FROM subject_classes WHERE subjectId = ?',
+      [row.id],
+    );
+    if (linked && linked.length) continue; // already migrated
+
+    const names = String(row.className || '')
+      .split(',')
+      .map((n) => n.trim())
+      .filter((n) => n && n !== WILDCARD_CLASS);
+    for (const name of names) {
+      const clsRow = await get(
+        'SELECT id FROM classes WHERE name = ? COLLATE NOCASE',
+        [name],
+      );
+      if (!clsRow) continue;
+      await run(
+        'INSERT OR IGNORE INTO subject_classes (subjectId, classId) VALUES (?, ?)',
+        [row.id, clsRow.id],
+      );
+    }
+  }
 
   // --- classes & class_subjects tables --------------------------------
   const classCols = await all('PRAGMA table_info(classes)');
@@ -441,6 +528,76 @@ async function migrateClassSubjects() {
       CREATE INDEX IF NOT EXISTS idx_class_subjects_class ON class_subjects(classId);
     `);
   }
+
+  // The junction table is the source of truth, so the denormalised columns have
+  // to agree with it before any query reads them.
+  await refreshSubjectClassColumns();
+}
+
+/**
+ * Recomputes subjects.className (', ' separated names) and subjects.classIds
+ * (JSON array) from the subject_classes junction table.
+ *
+ * The junction table is authoritative; these two columns are a denormalised copy
+ * that keeps `SELECT * FROM subjects` self-describing for the Excel export and
+ * lets the renderer show the assigned classes without a second query.
+ */
+async function refreshSubjectClassColumns() {
+  const rows = (await all('SELECT id FROM subjects')) || [];
+  for (const row of rows) {
+    const links = (await all(
+      `SELECT c.id, c.name
+         FROM subject_classes sc
+         JOIN classes c ON c.id = sc.classId
+        WHERE sc.subjectId = ?
+        ORDER BY c.gradeOrder ASC, c.name COLLATE NOCASE ASC`,
+      [row.id],
+    )) || [];
+    await run('UPDATE subjects SET className = ?, classIds = ? WHERE id = ?', [
+      links.map((l) => l.name).join(', '),
+      JSON.stringify(links.map((l) => l.id)),
+      row.id,
+    ]);
+  }
+}
+
+/**
+ * Gives every subject that has no class assignment to every class that exists.
+ *
+ * This is the only route by which a subject is ever attached to a class it was
+ * not explicitly configured for, and it exists purely to keep the two cases the
+ * user can create from ending up invisible:
+ *
+ *  - a brand new database, where the seeded subjects are written before the
+ *    first student (and therefore the first class) exists;
+ *  - an existing database whose subjects predate class assignment, where the
+ *    old wildcard meant "applies everywhere".
+ *
+ * Once a subject has an assignment of its own, this never touches it again, so
+ * a teacher who narrows a subject to one class keeps it there.
+ *
+ * Returns true when at least one link was created.
+ */
+async function attachUnassignedSubjects() {
+  const classes = (await all('SELECT id FROM classes ORDER BY gradeOrder, name')) || [];
+  if (!classes.length) return false;
+
+  const orphans = (await all(
+    `SELECT id FROM subjects
+      WHERE NOT EXISTS (SELECT 1 FROM subject_classes sc WHERE sc.subjectId = subjects.id)`,
+  )) || [];
+  if (!orphans.length) return false;
+
+  for (const subject of orphans) {
+    for (const cls of classes) {
+      await run(
+        'INSERT OR IGNORE INTO subject_classes (subjectId, classId) VALUES (?, ?)',
+        [subject.id, cls.id],
+      );
+    }
+  }
+  await refreshSubjectClassColumns();
+  return true;
 }
 
 /**
@@ -470,6 +627,8 @@ function isDatabaseOpen() {
 
 module.exports = {
   initDatabase,
+  attachUnassignedSubjects,
+  refreshSubjectClassColumns,
   closeDatabase,
   isDatabaseOpen,
   getDatabaseFile,

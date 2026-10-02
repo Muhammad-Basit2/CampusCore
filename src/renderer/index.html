@@ -35,11 +35,17 @@
             <span class="nav-label">Fee &amp; Invoicing</span>
             <kbd>Ctrl+I</kbd>
           </button>
-          <button class="nav-item" data-view="grades" role="tab" aria-selected="false">
-            <span class="nav-ico">&#9733;</span>
-            <span class="nav-label">Grades &amp; Reports</span>
-            <kbd>Ctrl+R</kbd>
-          </button>
+          <div class="nav-group" id="navGrades">
+            <button class="nav-item" data-view="grades" role="tab" aria-selected="false"
+                    aria-expanded="false" aria-controls="navGradesChildren">
+              <span class="nav-ico">&#9733;</span>
+              <span class="nav-label">Grades &amp; Reports</span>
+              <span class="nav-caret" aria-hidden="true">&#9656;</span>
+              <kbd>Ctrl+R</kbd>
+            </button>
+            <!-- Category / class tree is built at runtime from the classes table. -->
+            <div class="nav-children" id="navGradesChildren"></div>
+          </div>
           <button class="nav-item" data-view="settings" role="tab" aria-selected="false">
             <span class="nav-ico">&#9881;</span>
             <span class="nav-label">Settings</span>
@@ -62,6 +68,7 @@
           <div class="topbar-title">
             <h2 id="viewTitle">Dashboard</h2>
             <p id="viewSubtitle">Overview of your school</p>
+            <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
           </div>
           <div class="topbar-right">
             <span class="pill" id="schoolPill">-</span>

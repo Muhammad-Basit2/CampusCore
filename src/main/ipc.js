@@ -64,6 +64,14 @@ function oneOf(value, allowed, fallback) {
   return v;
 }
 
+function ids(value, field = 'ids') {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) return value.map((v) => int(v, field, { min: 1 })).filter(Boolean);
+  // Single ID passed as string/number
+  const v = int(value, field, { min: 1 });
+  return v ? [v] : [];
+}
+
 function id(value, field = 'id') {
   const v = int(value, field, { min: 1 });
   if (!v) throw new ValidationError(`${field} is required`);
@@ -93,15 +101,130 @@ function notify(ctx, what) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Automatic class synchronisation                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Makes sure `className` exists in the classes table.
+ *
+ * Classes are no longer created by hand anywhere in the UI: they appear as
+ * soon as a student is registered into them. This helper is the single place
+ * that does it, so every entry point (student form, Excel import, ...) stays
+ * in step. Returns { row, created } - created is true only when this call is
+ * what brought the class into existence - or null for a blank name.
+ *
+ * Existing classes are matched case-insensitively and keep their stored
+ * spelling, so "class 5" does not fork into a second row next to "Class 5".
+ */
+async function ensureClass(className) {
+  const name = String(className || '').trim();
+  if (!name) return null;
+
+  const existing = await db.get('SELECT * FROM classes WHERE name = ? COLLATE NOCASE', [name]);
+  if (existing) return { row: existing, created: false };
+
+  // Append after the highest existing gradeOrder so a new class lands at the
+  // end of the pills rather than jumping to the front.
+  const maxRow = await db.get('SELECT IFNULL(MAX(gradeOrder), 0) AS maxOrder FROM classes');
+  const nextOrder = Number(maxRow && maxRow.maxOrder) + 1;
+
+  await db.run('INSERT INTO classes (name, gradeOrder) VALUES (?, ?)', [name, nextOrder]);
+  const row = await db.get('SELECT * FROM classes WHERE name = ? COLLATE NOCASE', [name]);
+  // A brand new class must not start with an empty curriculum, so the subjects
+  // that are still unassigned (the seeded defaults) are attached to it here.
+  await db.attachUnassignedSubjects();
+  return { row, created: true };
+}
+
+/**
+ * Drops a class once its last student leaves, so the class list tracks the
+ * roster in both directions. Both kinds of class subject cascade with the row.
+ *
+ * Only classes that have no remaining students are removed.
+ */
+async function pruneClassIfEmpty(className) {
+  const name = String(className || '').trim();
+  if (!name) return false;
+
+  const stillUsed = await db.get(
+    'SELECT COUNT(*) AS c FROM students WHERE studentClass = ? COLLATE NOCASE',
+    [name],
+  );
+  if (Number(stillUsed && stillUsed.c) > 0) return false;
+
+  const res = await db.run('DELETE FROM classes WHERE name = ? COLLATE NOCASE', [name]);
+  if (res.changes > 0) {
+    // subject_classes rows cascade with the class, which would leave the
+    // denormalised subject columns pointing at a class that no longer exists.
+    await db.refreshSubjectClassColumns();
+  }
+  return res.changes > 0;
+}
+
+/**
+ * Registers every distinct class on the roster that has no classes row yet.
+ *
+ * Used by the bulk Excel import, where rows land straight in the students table
+ * and there is no per-student hook to call ensureClass from. Returns true when
+ * at least one class was created.
+ */
+async function syncClassesFromRoster() {
+  const rows = await db.all(
+    "SELECT DISTINCT studentClass FROM students WHERE TRIM(studentClass) <> ''",
+  );
+  let created = false;
+  for (const row of rows) {
+    const result = await ensureClass(row.studentClass);
+    if (result && result.created) created = true;
+  }
+  return created;
+}
+
+/**
+ * Renames a class everywhere it is referenced.
+ *
+ * The classes table is the label, but students, invoices, marks and grades
+ * subjects all store the class as text, so a rename has to follow through or
+ * the class silently disappears from every report.
+ */
+async function renameClassEverywhere(fromName, toName) {
+  const from = String(fromName || '').trim();
+  const to = String(toName || '').trim();
+  if (!from || !to || from.toLowerCase() === to.toLowerCase()) return false;
+
+  await db.run('UPDATE students    SET studentClass = ? WHERE studentClass = ? COLLATE NOCASE', [to, from]);
+  await db.run('UPDATE invoices    SET studentClass = ? WHERE studentClass = ? COLLATE NOCASE', [to, from]);
+  await db.run('UPDATE marks       SET studentClass = ? WHERE studentClass = ? COLLATE NOCASE', [to, from]);
+  // subjects.className is a denormalised ', ' separated list of class names, so
+  // the rename has to rewrite the matching token rather than the whole value -
+  // a subject assigned to "Class 1, Class 2" must keep its Class 2 link.
+  const subjects = await db.all(
+    "SELECT id, className FROM subjects WHERE className LIKE ? COLLATE NOCASE",
+    [`%${from}%`],
+  );
+  for (const row of subjects) {
+    const names = String(row.className || '')
+      .split(',')
+      .map((n) => n.trim());
+    if (!names.some((n) => n.toLowerCase() === from.toLowerCase())) continue;
+    const next = names
+      .map((n) => (n.toLowerCase() === from.toLowerCase() ? to : n))
+      .join(', ');
+    await db.run('UPDATE subjects SET className = ? WHERE id = ?', [next, row.id]);
+  }
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
 /* Class-aware subject resolution                                      */
 /* ------------------------------------------------------------------ */
 
 /**
  * Normalises a class filter coming from the renderer.
  *
- * The empty string and the wildcard both mean "no class filter", which makes the
- * subject list the union of every configured subject. Anything else is an exact
- * (case-insensitive) class name.
+ * The empty string and the legacy wildcard both mean "no class filter", which
+ * makes the subject list the union of every configured subject. Anything else is
+ * an exact (case-insensitive) class name.
  */
 function normaliseClassFilter(value) {
   const v = value === undefined || value === null ? '' : String(value).trim();
@@ -110,54 +233,86 @@ function normaliseClassFilter(value) {
 }
 
 /**
+ * The classes a subject is explicitly assigned to, as { id, name } pairs.
+ *
+ * Read from the subject_classes junction table, which is the authoritative
+ * assignment. A subject may be assigned to any number of classes, so callers
+ * must render all of them rather than picking one.
+ */
+async function classesForSubject(subjectId) {
+  return db.all(
+    `SELECT c.id, c.name
+       FROM subject_classes sc
+       JOIN classes c ON c.id = sc.classId
+      WHERE sc.subjectId = ?
+      ORDER BY c.gradeOrder ASC, c.name COLLATE NOCASE ASC`,
+    [subjectId],
+  );
+}
+
+/**
  * The subjects that apply to one class, in display order.
  *
- * A class-specific row wins over the '*' wildcard row of the same name, so a
- * teacher can give Class 5 its own maximum for Mathematics while every other
- * class keeps the shared default. Ordering is driven by the effective row's
- * sortOrder, with the subject name as a stable tie-breaker.
+ * A subject appears when the class is explicitly one of its assignments. There
+ * is no wildcard row and no implicit "applies to everything" fallback, so a
+ * subject configured for Class 1 is invisible to Class 2. The same name may be
+ * configured separately per class; the assignment for the requested class wins
+ * when the merge below meets a duplicate.
  *
  * Subjects defined in the Classes & Subjects module (class_subjects table) are
  * also included so that the report card pulls from both management areas.
+ *
+ * With no class the whole catalogue is returned, with each subject carrying the
+ * list of classes it belongs to so the renderer can label the rows.
  */
 async function subjectsForClass(className) {
   const cls = normaliseClassFilter(className);
 
-  // 1. Fetch from the grades subjects table (className = 'Class X' or '*').
-  const gradeRows = await db.all(
-    `SELECT * FROM subjects
-      WHERE className = ? COLLATE NOCASE OR className = ?
-      ORDER BY sortOrder ASC, name COLLATE NOCASE ASC`,
-    [cls, db.WILDCARD_CLASS],
-  );
-
-  // 2. Fetch from the classes & subjects module (class_subjects table).
-  let csRows = [];
+  // 1. Resolve the class (if any) to its id - assignment is by id, never by name.
+  let classRow = null;
   if (cls) {
-    const classRow = await db.get(
-      'SELECT id FROM classes WHERE name = ? COLLATE NOCASE',
-      [cls],
-    );
-    if (classRow) {
-      csRows = await db.all(
-        'SELECT id, name, code, status FROM class_subjects WHERE classId = ? AND status = ?',
-        [classRow.id, 'Active'],
-      );
-    }
+    classRow = await db.get('SELECT id, name FROM classes WHERE name = ? COLLATE NOCASE', [cls]);
   }
 
-  // 3. Merge: grade rows take priority; class_subjects fill gaps.
+  // 2. Fetch the grades subjects that are explicitly assigned to this class.
+  const gradeRows = classRow
+    ? await db.all(
+        `SELECT s.* FROM subjects s
+           JOIN subject_classes sc ON sc.subjectId = s.id
+          WHERE sc.classId = ?
+          ORDER BY s.sortOrder ASC, s.name COLLATE NOCASE ASC`,
+        [classRow.id],
+      )
+    : await db.all(
+        'SELECT * FROM subjects ORDER BY sortOrder ASC, name COLLATE NOCASE ASC',
+      );
+
+  // 3. Fetch from the classes & subjects module (class_subjects table).
+  let csRows = [];
+  if (classRow) {
+    csRows = await db.all(
+      'SELECT id, name, code, status FROM class_subjects WHERE classId = ? AND status = ?',
+      [classRow.id, 'Active'],
+    );
+  }
+
+  // 4. Merge: grade rows take priority; class_subjects fill gaps.
   const byName = new Map();
   for (const row of gradeRows) {
+    // The row id travels with the subject: the Grades view keys its edit and
+    // delete actions off it, so dropping it here leaves those buttons inert.
+    const assigned = await classesForSubject(row.id);
     byName.set(row.name.toLowerCase(), {
-      // The row id travels with the subject: the Grades view keys its edit and
-      // delete actions off it, so dropping it here leaves those buttons inert.
       id: row.id,
       name: row.name,
       maxMarks: Number(row.maxMarks) || 100,
       code: row.code || '',
       sortOrder: Number(row.sortOrder) || 0,
-      className: row.className || cls,
+      classIds: assigned.map((a) => a.id),
+      classNames: assigned.map((a) => a.name),
+      // Kept for the Excel export and for the denormalised column; a multi-class
+      // subject stores every assigned class here, comma separated.
+      className: assigned.map((a) => a.name).join(', '),
       source: 'grades',
     });
   }
@@ -172,7 +327,9 @@ async function subjectsForClass(className) {
         maxMarks: 100, // default for class_subjects (no maxMarks column)
         code: row.code || '',
         sortOrder: 999, // appended after all grade subjects
-        className: cls,
+        classIds: classRow ? [classRow.id] : [],
+        classNames: classRow ? [classRow.name] : [],
+        className: classRow ? classRow.name : '',
         source: 'classSubjects',
       });
     }
@@ -184,25 +341,57 @@ async function subjectsForClass(className) {
   return merged;
 }
 
-/** Distinct class names that appear on students, for populating pickers. */
+/**
+ * Every class a subject can be assigned to, as ordered class objects.
+ *
+ * The classes table is the authority, but the roster and any class names still
+ * referenced only by a subject row are folded in, so a subject configured
+ * against a class that has since lost its last student stays editable.
+ */
 async function knownClasses() {
   const rows = await db.all(
-    'SELECT DISTINCT studentClass AS name FROM students WHERE studentClass <> ?',
-    [db.WILDCARD_CLASS],
-  );
-  const fromSubjects = await db.all(
-    'SELECT DISTINCT className AS name FROM subjects WHERE className <> ?',
-    [db.WILDCARD_CLASS],
+    'SELECT id, name FROM classes ORDER BY gradeOrder ASC, name COLLATE NOCASE ASC',
   );
   const set = new Map();
-  for (const r of [...rows, ...fromSubjects]) {
-    if (r.name) set.set(r.name.toLowerCase(), r.name);
+  for (const r of rows) {
+    if (r.name) set.set(r.name.toLowerCase(), r);
   }
-  return [...set.values()].sort((a, b) => a.localeCompare(b));
+
+  const loose = await db.all(
+    "SELECT DISTINCT studentClass AS name FROM students WHERE TRIM(studentClass) <> ''",
+  );
+  for (const r of loose) {
+    if (r.name && !set.has(r.name.toLowerCase())) {
+      const existing = await db.get(
+        'SELECT id FROM classes WHERE name = ? COLLATE NOCASE',
+        [r.name],
+      );
+      if (existing) set.set(r.name.toLowerCase(), { id: existing.id, name: r.name });
+    }
+  }
+
+  const order = new Map(rows.map((r) => [r.name.toLowerCase(), r.id]));
+  return [...set.values()].sort((a, b) => {
+    const oa = order.has(a.name.toLowerCase()) ? order.get(a.name.toLowerCase()) : Infinity;
+    const ob = order.has(b.name.toLowerCase()) ? order.get(b.name.toLowerCase()) : Infinity;
+    return oa - ob || a.name.localeCompare(b.name);
+  });
 }
 
 
 function registerIpcHandlers(ctx) {
+  // The Excel helpers are a hard dependency of the data:* channels. main.js only
+  // passes a window accessor, so resolve them here instead of trusting ctx.
+  const excel = ctx.excel || require('./excel');
+  const excelApi = {
+    exportStudents: excel.exportStudents,
+    exportInvoices: excel.exportInvoices,
+    exportMarks: excel.exportMarks,
+    exportClassesSubjects: excel.exportClassesSubjects,
+    importStudents: excel.importStudents,
+    importMarks: excel.importMarks,
+  };
+
   /* ============================= app ============================= */
   handle('app:get-info', async () => ({
     name: app.getName(),
@@ -249,7 +438,10 @@ function registerIpcHandlers(ctx) {
       'INSERT INTO students (rollNo, name, studentClass, guardian, phone) VALUES (?, ?, ?, ?, ?)',
       [r, n, c, g, p],
     );
+    // Registering a student into a new class creates that class automatically.
+    const ensured = await ensureClass(c);
     notify(ctx, 'students');
+    if (ensured && ensured.created) notify(ctx, 'classes');
     return db.get('SELECT * FROM students WHERE id = ?', [res.lastID]);
   });
 
@@ -267,6 +459,11 @@ function registerIpcHandlers(ctx) {
     );
     if (dup) throw new ValidationError(`Roll No "${r}" already exists in class "${c}"`);
 
+    // Read the class the student is in *before* the update overwrites it; the
+    // old one has to be pruned afterwards if this move empties it.
+    const previous = await db.get('SELECT studentClass FROM students WHERE id = ?', [studentId]);
+    const oldClass = previous ? previous.studentClass : '';
+
     await db.run(
       'UPDATE students SET rollNo = ?, name = ?, studentClass = ?, guardian = ?, phone = ? WHERE id = ?',
       [r, n, c, g, p, studentId],
@@ -276,7 +473,16 @@ function registerIpcHandlers(ctx) {
       [r, n, c, studentId],
     );
     await db.run('UPDATE marks SET rollNo = ? WHERE studentId = ?', [r, studentId]);
+
+    // Moving a student into a different class creates the new class and drops
+    // the old one once nobody is left in it.
+    const moved = oldClass.toLowerCase() !== c.toLowerCase();
+    const ensured = moved ? await ensureClass(c) : null;
+    let pruned = false;
+    if (moved) pruned = await pruneClassIfEmpty(oldClass);
+
     notify(ctx, 'students');
+    if ((ensured && ensured.created) || pruned) notify(ctx, 'classes');
     return db.get('SELECT * FROM students WHERE id = ?', [studentId]);
   });
 
@@ -292,7 +498,11 @@ function registerIpcHandlers(ctx) {
     if (!row) throw new ValidationError('Student not found');
     await db.run('DELETE FROM students WHERE id = ?', [studentId]);
     await db.run('DELETE FROM reportRemarks WHERE rollNo = ?', [row.rollNo]);
+    // The class disappears with its last student, so the roster and the class
+    // list never drift apart.
+    const pruned = await pruneClassIfEmpty(row.studentClass);
     notify(ctx, 'students');
+    if (pruned) notify(ctx, 'classes');
     return { deleted: true, rollNo: row.rollNo };
   });
 
@@ -486,100 +696,155 @@ function registerIpcHandlers(ctx) {
   /**
    * Subjects for a class.
    *
-   * With no class the result is every configured row, grouped so the same name
-   * used in two classes is visible once per class. With a class it is the
-   * effective list: class-specific rows overriding the shared '*' ones.
+   * With a class the result is every subject explicitly assigned to it, plus the
+   * subjects defined in the Classes & Subjects module for that class. With no
+   * class it is the whole catalogue, each row carrying classIds/classNames so the
+   * table can show every class a subject belongs to.
    */
-  handle('grades:list-subjects', async ({ studentClass } = {}) => {
-    const cls = normaliseClassFilter(studentClass);
-    if (cls) return subjectsForClass(cls);
+  handle('grades:list-subjects', async ({ studentClass } = {}) =>
+    subjectsForClass(normaliseClassFilter(studentClass)),
+  );
 
-    const rows = await db.all(
-      'SELECT * FROM subjects ORDER BY sortOrder ASC, name COLLATE NOCASE ASC, className ASC',
-    );
-    return rows;
-  });
+  /**
+   * Class objects a subject can be assigned to, ready for the checkbox picker.
+   *
+   * There is no wildcard option: a subject is always assigned to one or more
+   * named classes, so the payload is a plain list of classes with their ids.
+   */
+  handle('grades:list-classes', async () => ({ classes: await knownClasses() }));
 
-  /** Class names available to configure subjects against. */
-  handle('grades:list-classes', async () => ({
-    classes: await knownClasses(),
-    wildcard: db.WILDCARD_CLASS,
-  }));
+  /**
+   * Resolves the class ids on a save payload into real class rows.
+   *
+   * `studentClass` is accepted as a fallback for callers that only know a class
+   * by name, but classIds is what the UI sends and what actually gets stored.
+   * At least one class is required: a subject with no class would be invisible
+   * everywhere, so it is rejected rather than silently saved.
+   */
+  async function resolveSubjectClasses(classIds, studentClass) {
+    const requested = Array.isArray(classIds)
+      ? [...new Set(classIds.map((v) => int(v, 'classId', { min: 1 })).filter(Boolean))]
+      : [];
 
-  handle('grades:add-subject', async ({ name, maxMarks, studentClass } = {}) => {
-    const n = str(name, 'Subject', { required: true, max: 60 });
-    const m = num(maxMarks, 'Max marks', { min: 1, max: 1000, fallback: 100 });
-    const cls = normaliseClassFilter(studentClass) || db.WILDCARD_CLASS;
-    const dupe = await db.get(
-      'SELECT id FROM subjects WHERE name = ? COLLATE NOCASE AND className = ? COLLATE NOCASE',
-      [n, cls],
-    );
-    if (dupe) {
-      throw new ValidationError(
-        cls === db.WILDCARD_CLASS
-          ? `Subject "${n}" already exists`
-          : `Subject "${n}" is already configured for ${cls}`,
+    // Ids that no longer resolve are dropped rather than rejected: a class that
+    // was deleted between the picker rendering and the save must not block the
+    // save of the classes that do exist.
+    const resolved = [];
+    for (const cid of requested) {
+      const row = await db.get('SELECT id, name FROM classes WHERE id = ?', [cid]);
+      if (row) resolved.push(row);
+    }
+
+    // No ids given: fall back to the name the caller passed, if any.
+    if (!resolved.length) {
+      const name = normaliseClassFilter(studentClass);
+      if (name) {
+        const row = await db.get(
+          'SELECT id, name FROM classes WHERE name = ? COLLATE NOCASE',
+          [name],
+        );
+        if (row) resolved.push(row);
+      }
+    }
+
+    if (!resolved.length) {
+      throw new ValidationError('Select at least one class for this subject');
+    }
+    return resolved;
+  }
+
+  /** Writes the junction rows and refreshes the denormalised columns. */
+  async function saveSubjectClasses(subjectId, classRows) {
+    await db.run('DELETE FROM subject_classes WHERE subjectId = ?', [subjectId]);
+    for (const row of classRows) {
+      await db.run(
+        'INSERT OR IGNORE INTO subject_classes (subjectId, classId) VALUES (?, ?)',
+        [subjectId, row.id],
       );
     }
-    // Continue the ordering of the set this subject joins: its own class when it
-    // has one, otherwise the shared list.
-    const last = await db.get(
-      'SELECT IFNULL(MAX(sortOrder), 0) AS m FROM subjects WHERE className = ? COLLATE NOCASE',
-      [cls],
-    );
+    await db.refreshSubjectClassColumns();
+  }
+
+  handle('grades:add-subject', async ({ name, maxMarks, studentClass, classIds } = {}) => {
+    const n = str(name, 'Subject', { required: true, max: 60 });
+    const m = num(maxMarks, 'Max marks', { min: 1, max: 1000, fallback: 100 });
+    const classes = await resolveSubjectClasses(classIds, studentClass);
+
+    // A name may only appear once per class, so it is enough that none of the
+    // requested classes already has this subject.
+    for (const cls of classes) {
+      const dupe = await db.get(
+        `SELECT s.id FROM subjects s
+           JOIN subject_classes sc ON sc.subjectId = s.id
+          WHERE sc.classId = ? AND s.name = ? COLLATE NOCASE`,
+        [cls.id, n],
+      );
+      if (dupe) {
+        throw new ValidationError(`Subject "${n}" is already configured for ${cls.name}`);
+      }
+    }
+
+    // Continue the ordering of the catalogue this subject joins.
+    const last = await db.get('SELECT IFNULL(MAX(sortOrder), 0) AS m FROM subjects');
     const res = await db.run(
-      'INSERT INTO subjects (name, className, maxMarks, sortOrder) VALUES (?, ?, ?, ?)',
-      [n, cls, m, (last ? last.m : 0) + 1],
+      'INSERT INTO subjects (name, className, classIds, maxMarks, sortOrder) VALUES (?, ?, ?, ?, ?)',
+      [
+        n,
+        classes.map((c) => c.name).join(', '),
+        JSON.stringify(classes.map((c) => c.id)),
+        m,
+        (last ? last.m : 0) + 1,
+      ],
     );
+    const newId = res.lastID;
+    await saveSubjectClasses(newId, classes);
+
     notify(ctx, 'subjects');
-    return db.get('SELECT * FROM subjects WHERE id = ?', [res.lastID]);
+    return db.get('SELECT * FROM subjects WHERE id = ?', [newId]);
   });
 
-  handle('grades:update-subject', async ({ id: sid, name, maxMarks, studentClass } = {}) => {
+  handle('grades:update-subject', async ({ id: sid, name, maxMarks, studentClass, classIds } = {}) => {
     const subjectId = id(sid, 'Subject id');
     const n = str(name, 'Subject', { required: true, max: 60 });
     const m = num(maxMarks, 'Max marks', { min: 1, max: 1000, fallback: 100 });
     const current = await db.get('SELECT * FROM subjects WHERE id = ?', [subjectId]);
     if (!current) throw new ValidationError('Subject not found');
 
-    // A missing class keeps the subject where it is; an explicit empty/'*' moves
-    // it to the shared list.
-    const hasClass = studentClass !== undefined && studentClass !== null;
-    const cls = hasClass ? normaliseClassFilter(studentClass) || db.WILDCARD_CLASS : current.className;
+    // Omitting the class fields keeps the current assignment, which is what a
+    // caller that only wants to change the name or the maximum relies on.
+    const touchesClasses = Array.isArray(classIds) || (studentClass !== undefined && studentClass !== null);
+    const targetClasses = touchesClasses
+      ? await resolveSubjectClasses(classIds, studentClass)
+      : await classesForSubject(subjectId);
 
-    const dupe = await db.get(
-      `SELECT id FROM subjects
-        WHERE name = ? COLLATE NOCASE AND className = ? COLLATE NOCASE AND id <> ?`,
-      [n, cls, subjectId],
-    );
-    if (dupe) {
-      throw new ValidationError(
-        cls === db.WILDCARD_CLASS
-          ? `Subject "${n}" already exists`
-          : `Subject "${n}" is already configured for ${cls}`,
-      );
+    if (touchesClasses) {
+      for (const cls of targetClasses) {
+        const dupe = await db.get(
+          `SELECT s.id FROM subjects s
+             JOIN subject_classes sc ON sc.subjectId = s.id
+            WHERE sc.classId = ? AND s.name = ? COLLATE NOCASE AND s.id <> ?`,
+          [cls.id, n, subjectId],
+        );
+        if (dupe) {
+          throw new ValidationError(`Subject "${n}" is already configured for ${cls.name}`);
+        }
+      }
     }
 
     // Renaming a subject must carry its recorded marks along, otherwise history
     // silently detaches from the subject it belongs to.
     if (n.toLowerCase() !== String(current.name).toLowerCase()) {
-      await db.run('UPDATE subjects SET name = ?, className = ?, maxMarks = ? WHERE id = ?', [
-        n,
-        cls,
-        m,
-        subjectId,
-      ]);
+      await db.run('UPDATE subjects SET name = ?, maxMarks = ? WHERE id = ?', [n, m, subjectId]);
       await db.run('UPDATE marks SET subject = ? WHERE subject = ? COLLATE NOCASE', [
         n,
         current.name,
       ]);
     } else {
-      await db.run('UPDATE subjects SET className = ?, maxMarks = ? WHERE id = ?', [
-        cls,
-        m,
-        subjectId,
-      ]);
+      await db.run('UPDATE subjects SET maxMarks = ? WHERE id = ?', [m, subjectId]);
     }
+
+    if (touchesClasses) await saveSubjectClasses(subjectId, targetClasses);
+
     notify(ctx, 'subjects');
     return db.get('SELECT * FROM subjects WHERE id = ?', [subjectId]);
   });
@@ -588,17 +853,18 @@ function registerIpcHandlers(ctx) {
     const subjectId = id(sid, 'Subject id');
     const subject = await db.get('SELECT * FROM subjects WHERE id = ?', [subjectId]);
     if (!subject) throw new ValidationError('Subject not found');
+    // Read the assignment before the row goes: subject_classes cascades with it.
+    const assigned = await classesForSubject(subjectId);
     await db.run('DELETE FROM subjects WHERE id = ?', [subjectId]);
 
-    // Only drop marks that belong to this subject in this class. The shared '*'
-    // row governs every other class, so its marks must survive.
-    if (subject.className === db.WILDCARD_CLASS) {
-      await db.run('DELETE FROM marks WHERE subject = ? COLLATE NOCASE', [subject.name]);
-    } else {
+    // Marks recorded in a class that no longer has this subject are orphaned, so
+    // they go with it. Marks from a class the subject was never assigned to were
+    // already unreachable and are left untouched.
+    for (const cls of assigned) {
       await db.run(
         `DELETE FROM marks
           WHERE subject = ? COLLATE NOCASE AND studentClass = ? COLLATE NOCASE`,
-        [subject.name, subject.className],
+        [subject.name, cls.name],
       );
     }
     notify(ctx, 'subjects');
@@ -747,8 +1013,14 @@ function registerIpcHandlers(ctx) {
     const passMark = Number(settings.passMarkPercentage) || 50;
     const cls = normaliseClassFilter(studentClass);
 
+    // Match the class case-insensitively, the way every other handler does:
+    // class names are compared with COLLATE NOCASE throughout the app, so a
+    // stored "play group" must still be found under the pill "Play Group".
     const students = cls
-      ? await db.all('SELECT * FROM students WHERE studentClass = ? ORDER BY name COLLATE NOCASE', [cls])
+      ? await db.all(
+          'SELECT * FROM students WHERE studentClass = ? COLLATE NOCASE ORDER BY name COLLATE NOCASE',
+          [cls],
+        )
       : await db.all('SELECT * FROM students ORDER BY name COLLATE NOCASE');
     // Each student is graded against the subjects configured for their own
     // class, so classes with different curricula each get the right grid.
@@ -763,15 +1035,23 @@ function registerIpcHandlers(ctx) {
     );
     const remarks = await db.all('SELECT * FROM reportRemarks');
 
+    // Index the marks by roll + class + subject once instead of scanning the
+    // whole set for every student/subject pair. Keys are lower-cased so the
+    // lookup matches case-insensitively, as the SQL above now does.
+    const markIndex = new Map();
+    for (const m of marks) {
+      markIndex.set(
+        `${String(m.rollNo).toLowerCase()}|${String(m.studentClass).toLowerCase()}|${String(m.subject).toLowerCase()}`,
+        m,
+      );
+    }
+
     const results = students.map((s) => {
       const rows = (byStudent.get(s.id) || []).map((sub) => {
         // roll AND class must both match: a same-roll student in another class
         // must never leak into this row.
-        const found = marks.find(
-          (m) =>
-            m.rollNo === s.rollNo &&
-            m.studentClass === s.studentClass &&
-            m.subject === sub.name,
+        const found = markIndex.get(
+          `${String(s.rollNo).toLowerCase()}|${String(s.studentClass).toLowerCase()}|${String(sub.name).toLowerCase()}`,
         );
         return {
           subject: sub.name,
@@ -883,6 +1163,9 @@ function registerIpcHandlers(ctx) {
 
   /* ----------------- classes & subjects ----------------- */
   handle('classes:list', async () => {
+    // Keep the classes table in sync with the student roster so the Grades
+    // dropdown always shows the actual class names students are registered in.
+    await syncClassesFromRoster();
     return db.all('SELECT * FROM classes ORDER BY gradeOrder ASC, name ASC');
   });
 
@@ -894,7 +1177,11 @@ function registerIpcHandlers(ctx) {
       [className, order],
     );
     const cls = await db.get('SELECT * FROM classes WHERE id = last_insert_rowid()');
+    // A new class needs a curriculum too, so the still-unassigned subjects (the
+    // seeded defaults) are attached to it instead of leaving it empty.
+    await db.attachUnassignedSubjects();
     notify(ctx, 'classes');
+    notify(ctx, 'subjects');
     return cls;
   });
 
@@ -908,18 +1195,24 @@ function registerIpcHandlers(ctx) {
       'UPDATE classes SET name = ?, gradeOrder = ? WHERE id = ?',
       [className, order, targetId],
     );
-    const cls = await db.get('SELECT * FROM classes WHERE id = ?', [targetId]);
+    // Students, invoices, marks and grades subjects all store the class as text,
+    // so a rename has to travel with it or those rows go orphaned.
+    await renameClassEverywhere(row.name, className);
     notify(ctx, 'classes');
-    return cls;
+    notify(ctx, 'students');
+    return db.get('SELECT * FROM classes WHERE id = ?', [targetId]);
   });
 
   handle('classes:remove', async ({ id: classId }) => {
     const targetId = id(classId, 'id');
     const cls = await db.get('SELECT name FROM classes WHERE id = ?', [targetId]);
     if (!cls) throw new Error('Class not found');
-    // class_subjects.classId is ON DELETE CASCADE, so subjects go with it.
+    // class_subjects.classId and subject_classes.classId are ON DELETE CASCADE,
+    // so both sets of subjects go with it.
     await db.run('DELETE FROM classes WHERE id = ?', [targetId]);
+    await db.refreshSubjectClassColumns();
     notify(ctx, 'classes');
+    notify(ctx, 'subjects');
     return { name: cls.name };
   });
 
@@ -968,6 +1261,58 @@ function registerIpcHandlers(ctx) {
     await db.run('DELETE FROM class_subjects WHERE id = ?', [targetId]);
     notify(ctx, 'subjects');
     return { name: subj.name };
+  });
+
+  /* ========================== dashboard =========================== */
+  handle('data:export-students', async () => excelApi.exportStudents());
+
+  handle('data:export-invoices', async () => excelApi.exportInvoices());
+
+  handle('data:export-marks', async ({ examName, studentClass } = {}) =>
+    excelApi.exportMarks({ examName, studentClass }));
+
+  handle('data:export-classes-subjects', async () => excelApi.exportClassesSubjects());
+
+  handle('data:import-students', async ({ filePath }) => {
+    if (!filePath) throw new Error('No file path provided');
+    const result = await excelApi.importStudents(filePath);
+    notify(ctx, 'students');
+    // Imported rows carry their own class names, so register the new ones the
+    // same way the student form does.
+    if (await syncClassesFromRoster()) notify(ctx, 'classes');
+    return result;
+  });
+
+  handle('data:import-students-dialog', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }, { name: 'All', extensions: ['*'] }],
+    });
+    if (result.canceled || !result.filePaths.length) return null;
+    const imported = await excelApi.importStudents(result.filePaths[0]);
+    notify(ctx, 'students');
+    if (await syncClassesFromRoster()) notify(ctx, 'classes');
+    return imported;
+  });
+
+  handle('data:import-marks', async ({ filePath, examName }) => {
+    if (!filePath) throw new Error('No file path provided');
+    if (!examName) throw new Error('Exam name is required for marks import');
+    const result = await excelApi.importMarks(filePath, examName);
+    notify(ctx, 'marks');
+    return result;
+  });
+
+  handle('data:import-marks-dialog', async ({ examName }) => {
+    if (!examName) throw new Error('Exam name is required for marks import');
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }, { name: 'All', extensions: ['*'] }],
+    });
+    if (result.canceled || !result.filePaths.length) return null;
+    const imported = await excelApi.importMarks(result.filePaths[0], examName);
+    notify(ctx, 'marks');
+    return imported;
   });
 
   /* ========================== dashboard =========================== */
@@ -1045,4 +1390,5 @@ module.exports = {
   computeStatus,
   subjectsForClass,
   normaliseClassFilter,
+  excel: require('./excel'),
 };
