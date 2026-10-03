@@ -33,6 +33,9 @@
         <div class="views" id="views">
           <section class="view" id="view-dashboard" data-view="dashboard"></section>
           <section class="view active" id="view-grades" data-view="grades"></section>
+          <!-- The keyboard cases switch the active view to exercise row commands
+               against a second view, so the section has to exist. -->
+          <section class="view" id="view-students" data-view="students"></section>
         </div>
       </main>
     </div>
@@ -42,6 +45,7 @@
 
     <!-- The real scripts, loaded in the same order as index.html. -->
     <script src="../src/renderer/js/ui.js"></script>
+    <script src="../src/renderer/js/keys.js"></script>
     <script src="../src/renderer/js/nav.js"></script>
     <script src="../src/renderer/js/grades.js"></script>
     <script src="./grades-ui-cases.js"></script>

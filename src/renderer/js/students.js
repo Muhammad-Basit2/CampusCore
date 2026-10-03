@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Students view - searchable roster, create/edit/delete and the handover
  * into the fee module for a given student.
  */
@@ -53,6 +53,26 @@ const Students = {
       </div>`;
 
     this.bind(view);
+    this.bindKeys();
+  },
+
+  /**
+   * Shortcuts for this view.
+   *
+   * Every one of them delegates to the same handler a click would reach, via
+   * Keys.act(), rather than calling openForm/delete directly. That keeps one
+   * copy of each behaviour: if the row markup changes its action names, the
+   * shortcuts follow instead of quietly breaking.
+   */
+  bindKeys() {
+    Keys.register('students', {
+      n: { keys: 'N', label: 'New student', run: () => $('#addStudent').click() },
+      e: { keys: 'E', label: 'Edit the highlighted student', run: () => Keys.act('edit') },
+      d: { keys: 'Del', label: 'Delete the highlighted student', run: () => Keys.act('delete') },
+      f: { keys: 'F', label: 'Open the highlighted student&rsquo;s invoices', run: () => Keys.act('fee') },
+      i: { keys: 'I', label: 'Import students from Excel', run: () => $('#impStudents').click() },
+      x: { keys: 'X', label: 'Export the roster to Excel', run: () => $('#expStudents').click() },
+    });
   },
 
   row(r) {
@@ -114,6 +134,9 @@ const Students = {
           'Import complete',
           parts.length ? parts.join(', ') + '.' : 'No rows were imported.',
         );
+        // An import writes once per row, so this reload is the only render the
+        // burst needs - App coalesces the broadcasts behind it into one.
+        selfRendered();
         await this.load();
       });
     });
@@ -242,6 +265,9 @@ const Students = {
       notify.ok('Student added', payload.name + ' is now on the roster.');
     }
     close();
+    // This view reloads itself below; tell App so the data:changed broadcast for
+    // the same write does not render the roster a second time.
+    selfRendered();
     await this.load();
   },
 
@@ -259,6 +285,7 @@ const Students = {
     if (!ok) return;
     await window.api.students.remove(student.id);
     notify.ok('Student deleted', student.name + ' has been removed from the roster.');
+    selfRendered();
     await this.load();
   },
 };

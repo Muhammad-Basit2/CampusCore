@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Grades & Reports view.
  *
  * One-row toolbar layout:
@@ -81,6 +81,83 @@ const Grades = {
     this.bindTabs(view);
     this.bindToolbar(view);
     await this.renderTab();
+    this.bindKeys();
+  },
+
+  /**
+   * Shortcuts for this view.
+   *
+   * Grades is three tabs in one view, so the set on offer depends on which tab
+   * is showing: `s` saves marks on Marks Entry but is meaningless on Results,
+   * and `d` deletes a subject only on the Subjects tab. `register()` replaces
+   * the whole map for the view, so building it fresh on every load() is what
+   * keeps the list honest after a tab change - there is no earlier set left
+   * behind to accept a keystroke that no longer means anything.
+   */
+  bindKeys() {
+    const common = {
+      m: { keys: '1', label: 'Marks Entry tab', run: () => this.showTab('marks') },
+      r: { keys: '2', label: 'Results &amp; Report Cards tab', run: () => this.showTab('results') },
+      u: { keys: '3', label: 'Subjects tab', run: () => this.showTab('subjects') },
+    };
+
+    // The three tabs do not share a toolbar: Marks Entry and Subjects export
+    // to Excel, Results prints. Each tab therefore gets its own I/X shortcuts
+    // rather than one pair that silently does nothing on two of the three.
+    const perTab = {
+      marks: {
+        ...common,
+        s: {
+          keys: 'S',
+          label: 'Save the marks grid',
+          run: () => Keys.click('#saveMarks') || this.saveGrid(),
+        },
+        i: { keys: 'I', label: 'Import marks from Excel', run: () => $('#impMarks').click() },
+        x: { keys: 'X', label: 'Export the marks to Excel', run: () => $('#expMarks').click() },
+      },
+      results: {
+        ...common,
+        c: { keys: 'C', label: 'Print the report card', run: () => Keys.act('card') },
+        k: { keys: 'K', label: 'Add or edit a remark', run: () => Keys.act('remark') },
+        p: { keys: 'P', label: 'Print every report card', run: () => $('#printAllCards').click() },
+        f: { keys: 'F', label: 'Show only students needing attention', run: () => this.toggleFailing() },
+      },
+      subjects: {
+        ...common,
+        n: { keys: 'N', label: 'Add a subject', run: () => $('#addSubject').click() },
+        e: { keys: 'E', label: 'Edit the highlighted subject', run: () => Keys.act('edit') },
+        d: { keys: 'Del', label: 'Delete the highlighted subject', run: () => Keys.act('delete') },
+        i: { keys: 'I', label: 'Import students into this class', run: () => $('#impSubjects').click() },
+        x: { keys: 'X', label: 'Export the subjects to Excel', run: () => $('#expSubjects').click() },
+      },
+    };
+
+    Keys.register('grades', perTab[this.tab] || common);
+  },
+
+  /** Flips the "Needs attention" filter from the keyboard. */
+  toggleFailing() {
+    const box = $('#resFailing');
+    if (!box) return;
+    box.checked = !box.checked;
+    this.applyResultFilters();
+  },
+
+  /** Switches tabs the way the tab strip does, including the active styling. */
+  async showTab(name) {
+    if (this.tab === name) return;
+    const view = $('#view-grades');
+    this.tab = name;
+    $$('.tab', view).forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+    await this.renderTab();
+    this.bindKeys();
+  },
+
+  /** Export button for whichever tab is showing, if it has one. */
+  exportCurrent() {
+    if (this.tab === 'marks') return Keys.click('#expMarks');
+    if (this.tab === 'subjects') return Keys.click('#expSubjects');
+    return Keys.click('#printAllCards');
   },
 
   bindTabs(view) {
@@ -358,6 +435,16 @@ const Grades = {
   },
 
   /** Paints (and repaints) the spreadsheet, preserving typed values. */
+  /**
+   * The mark inputs in reading order, captured once per paint.
+   *
+   * Enter/Tab navigation used to re-query every cell in the grid on each key
+   * press, and each keystroke in a cell re-read every cell in its own row, so
+   * the cost of typing one mark grew with the size of the class. Both now walk
+   * an array built when the grid is painted.
+   */
+  markInputs: [],
+
   paintGrid(host, rows) {
     const head =
       `<thead><tr>` +
@@ -401,11 +488,14 @@ const Grades = {
       ` <span class="grade-pill D">D 50%+</span> <span class="grade-pill Fail">Fail &lt; ` +
       esc(State.settings.passMarkPercentage || 50) + `%</span></div>`;
 
+    // The grid only changes shape when it is repainted, so the inputs are read
+    // once here rather than re-queried on every key press.
+    const inputs = (this.markInputs = $$('input.mark-input', host));
+
     // Keyboard navigation: Enter/Tab moves to next cell, Shift+Tab moves back
     // #marksHost is rebuilt wholesale by loadGrid(), so these are fresh nodes
     // and a plain binding is correct here.
     on(host, 'keydown', 'input.mark-input', (e, input) => {
-      const inputs = Array.from(host.querySelectorAll('input.mark-input'));
       const idx = inputs.indexOf(input);
       if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
         e.preventDefault();
@@ -430,13 +520,22 @@ const Grades = {
     $$('input.mark-input', host).forEach((i) => this.updateTotal(host, i.dataset.student));
   },
 
+  /**
+   * Recomputes one student's total from that row's inputs.
+   *
+   * Only the student's own cells are read. The previous version filtered every
+   * mark input in the grid by data-student, which meant a single keystroke
+   * walked the whole class - 40 students x 8 subjects is 320 inputs scanned to
+   * total eight of them.
+   */
   updateTotal(host, studentId) {
     const cell = host.querySelector('[data-total="' + studentId + '"]');
     if (!cell) return;
     let sum = 0;
     let filled = 0;
-    $$('input[data-subject]', host)
-      .filter((i) => i.dataset.student === studentId && i.value.trim() !== '')
+    const row = cell.closest('tr');
+    (row ? $$('input[data-subject]', row) : [])
+      .filter((i) => i.value.trim() !== '')
       .forEach((i) => {
         sum += Number(i.value) || 0;
         filled += 1;
@@ -511,6 +610,9 @@ const Grades = {
     if (result.saved) parts.push(result.saved + ' mark(s) saved');
     if (result.cleared) parts.push(result.cleared + ' mark(s) cleared');
     notify.ok('Marks saved', parts.join(', ') + ' for ' + this.examName + '.');
+    // The grid on screen is already correct, so the broadcast for this same
+    // write must not reload the roster and rebuild every cell behind it.
+    selfRendered();
   },
 
   /* ------------------------------------------------------------------ */
@@ -904,6 +1006,7 @@ const Grades = {
       return;
     }
     notify.ok('Subject added', name + ' is now part of ' + this.studentClass + '.');
+    selfRendered();
     await this.renderSubjects($('#gradesBody'));
   },
 
@@ -1018,6 +1121,7 @@ const Grades = {
                 }
                 notify.ok('Subject updated', name + ' has been saved.');
                 close();
+                selfRendered();
                 await this.renderSubjects($('#gradesBody'));
               }),
           }),
@@ -1041,6 +1145,7 @@ const Grades = {
     if (!ok) return;
     await window.api.grades.removeSubject({ id: subject.id });
     notify.ok('Subject deleted', subject.name + ' has been removed.');
+    selfRendered();
     await this.renderSubjects($('#gradesBody'));
   },
 
@@ -1084,6 +1189,7 @@ const Grades = {
                 await window.api.subjects.update({ id: Number(subject.classSubjectId), name, code, status });
                 notify.ok('Subject updated', name + ' has been saved.');
                 close();
+                selfRendered();
                 await this.renderSubjects($('#gradesBody'));
               }),
           }),
@@ -1102,6 +1208,7 @@ const Grades = {
     if (!ok) return;
     await window.api.subjects.remove({ id: Number(subject.classSubjectId) });
     notify.ok('Subject deleted', subject.name + ' has been removed.');
+    selfRendered();
     await this.renderSubjects($('#gradesBody'));
   },
 

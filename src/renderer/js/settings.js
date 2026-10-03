@@ -87,6 +87,31 @@ const Settings = {
       </div>`;
 
     this.bind(view);
+    this.bindKeys();
+  },
+
+  /**
+   * Shortcuts for this view.
+   *
+   * `s` is the one that matters: a settings form is a wall of fields with a save
+   * button at the bottom, and Ctrl+S is taken by "go to Students" - so plain S
+   * saves. The dispatcher only claims Ctrl+Enter for save, which works from
+   * inside any field; this adds the same action to a plain keystroke.
+   */
+  bindKeys() {
+    const view = $('#view-settings');
+    Keys.register('settings', {
+      s: {
+        keys: 'S',
+        label: 'Save settings',
+        run: () => $('#saveSettings', view).click(),
+      },
+      r: {
+        keys: 'R',
+        label: 'Restore the default settings',
+        run: () => $('#resetSettings', view).click(),
+      },
+    });
   },
 
 

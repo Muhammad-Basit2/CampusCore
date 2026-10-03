@@ -1039,5 +1039,199 @@ window.__runResults = async function runResults(G, N, out, sleep, record, eq) {
   G.classId = null;
   G.studentClass = '';
 
+  /* ------------------------------------------------------------------ */
+  /* Keyboard commands                                                  */
+  /* ------------------------------------------------------------------ */
+
+  await keyboardCases(out, { record, eq, sleep });
+
   return out;
 };
+
+/* ------------------------------------------------------------------ */
+/* Keyboard assertions                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Drives the Keys layer with synthetic keydown events and asserts what happens.
+ *
+ * The dispatcher reads document.activeElement and the live DOM, so these cases
+ * run against the state a user's keystrokes would really hit. Events are
+ * dispatched on document so the single registered listener sees them exactly
+ * as it would from a real key press.
+ */
+async function keyboardCases(out, { record, eq, sleep }) {
+  const K = eval('Keys');
+  const N = eval('Nav');
+
+  /** Presses a key with the given modifiers, as a real keydown would arrive. */
+  const press = (key, mods = {}) => {
+    const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...mods });
+    document.dispatchEvent(e);
+    return e;
+  };
+
+  /* ---------------- global chords ---------------- */
+  record('the keyboard layer is bound', !!K.bound);
+
+  // Puts a view on screen the way Nav.go() does, without rendering it: the
+  // keyboard cases supply their own markup and only care that the dispatcher
+  // scopes itself to the section the router marked active.
+  const showView = (id, view) => {
+    N.current = view;
+    document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === id));
+  };
+  showView('view-dashboard', 'dashboard');
+
+  const wentTo = [];
+  const realGo = N.go;
+  N.go = async (v) => { wentTo.push(v); };
+  press('d', { ctrlKey: true });
+  eq('Ctrl+D goes to the dashboard', wentTo, ['dashboard']);
+  press('s', { ctrlKey: true });
+  eq('Ctrl+S goes to students', wentTo, ['dashboard', 'students']);
+  press('b', { ctrlKey: true });
+  eq('Ctrl+B goes to classes & subjects', wentTo, ['dashboard', 'students', 'classes']);
+  press('i', { ctrlKey: true });
+  eq('Ctrl+I goes to fees', wentTo, ['dashboard', 'students', 'classes', 'fees']);
+  press('r', { ctrlKey: true });
+  eq('Ctrl+R goes to grades', wentTo, ['dashboard', 'students', 'classes', 'fees', 'grades']);
+  press('g', { ctrlKey: true });
+  eq('Ctrl+G goes to settings',
+    wentTo, ['dashboard', 'students', 'classes', 'fees', 'grades', 'settings']);
+  /* ---------------- typing is never intercepted ---------------- */
+  // The search box lives inside the active view, because that is where "/" looks.
+  const dash = document.querySelector('#view-dashboard');
+  dash.innerHTML =
+    '<div class="search-row"><input type="search" id="kbSearch" placeholder="Search" /></div>';
+  const input = document.querySelector('#kbSearch');
+  input.focus();
+
+  record('a search box is present to type into', document.activeElement === input);
+  const viewBefore = N.current;
+  press('n');
+  press('e');
+  press('d');
+  press('Delete');
+  eq('plain letters typed into a field reach the field', input.value, '');
+  eq('a field swallows the view commands', N.current, viewBefore);
+
+  press('Escape');
+  record('Escape leaves the field it was in', document.activeElement !== input);
+
+  const slash = press('/');
+  eq('"/" moves the caret into the search box', document.activeElement.id, 'kbSearch');
+  record('"/" is claimed when a search box exists', slash.defaultPrevented);
+
+  /* ---------------- a modal owns the keyboard ---------------- */
+  // "/" above deliberately left the caret in the search box, so leave it before
+  // testing a letter command - otherwise the case below would pass for the
+  // wrong reason (the field swallowing the key, not the dialog).
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  let ran = 0;
+  K.register('modaltest', { x: { keys: 'X', label: 'test command', run: () => { ran += 1; } } });
+  N.current = 'modaltest';
+  openModal(() => el('div', { class: 'modal narrow' }, [el('div', { text: 'a dialog' })]));
+  press('x');
+  eq('no command runs behind an open dialog', ran, 0);
+  press('Escape');
+  await sleep(60);
+  record('Escape closes the dialog', $('#modalBackdrop').hidden);
+  press('x');
+  eq('commands work again once the dialog closes', ran, 1);
+  /* ---------------- row highlight ---------------- */
+  // Clear any highlight left by an earlier case: it points at a node from a
+  // previous view's markup, and restore() would try to honour that id.
+  K.active = null;
+  K.activeId = null;
+  const rows = [
+    '<tr data-id="1"><td>One</td><td class="actions"><button data-act="edit">Edit</button></td></tr>',
+    '<tr data-id="2"><td>Two</td><td class="actions"><button data-act="edit">Edit</button></td></tr>',
+    '<tr data-id="3"><td>Three</td><td class="actions"><button data-act="edit">Edit</button></td></tr>',
+  ];
+  dash.innerHTML = '<table><tbody>' + rows.join('') + '</tbody></table>';
+
+  K.restore();
+  eq('the highlight starts on the first row', K.activeId, '1');
+  press('ArrowDown');
+  eq('ArrowDown moves to the second row', K.activeId, '2');
+  press('ArrowDown');
+  eq('ArrowDown again moves to the third row', K.activeId, '3');
+  press('ArrowDown');
+  eq('ArrowDown stops at the last row', K.activeId, '3');
+  press('ArrowUp');
+  eq('ArrowUp moves back one row', K.activeId, '2');
+  press('Home');
+  eq('Home jumps to the first row', K.activeId, '1');
+  press('End');
+  eq('End jumps to the last row', K.activeId, '3');
+  eq('only one row is highlighted at a time', dash.querySelectorAll('tr.is-kbd').length, 1);
+
+  /* ---------------- Enter acts on the highlighted row ---------------- */
+  let edited = null;
+  dash.querySelectorAll('tr').forEach((row) => {
+    row.querySelector('button').addEventListener('click', (e) => {
+      edited = e.target.closest('tr').dataset.id;
+      e.stopPropagation();
+    });
+  });
+  press('ArrowUp');
+  press('Enter');
+  eq('Enter opens the highlighted record', edited, '2');
+
+  /* ---------------- the highlight survives a re-render ---------------- */
+  dash.innerHTML = '<table><tbody>' + rows.join('') + '</tbody></table>';
+  K.restore();
+  eq('the highlight is restored onto the same record after a re-render', K.activeId, '2');
+
+  dash.innerHTML = '<table><tbody><tr data-id="9"><td>Only</td></tr></tbody></table>';
+  K.restore();
+  eq('a record that no longer exists falls back to the first row', K.activeId, '9');
+  /* ---------------- Delete runs the row's own handler ---------------- */
+  showView('view-students', 'students');
+  const sView = document.querySelector('#view-students');
+  let deleted = null;
+  // students.js is not loaded by this harness, so the view's own command map is
+  // not present. Registering the same shape it registers stands in for it: what
+  // is under test is that the dispatcher routes Delete to the row's handler.
+  K.register('students', {
+    d: { keys: 'Del', label: 'Delete the highlighted student', run: () => K.act('delete') },
+  });
+  K.active = null;
+  K.activeId = null;
+  sView.innerHTML =
+    '<table><tbody><tr data-id="7"><td>Ann</td>' +
+    '<td class="actions"><button class="btn sm" data-act="delete" data-id="7">Delete</button></td>' +
+    '</tr></tbody></table>';
+  sView.querySelector('button[data-act="delete"]').addEventListener('click', () => {
+    deleted = 7;
+  });
+  K.restore();
+  press('Delete');
+  eq("Delete runs the highlighted row's delete handler", deleted, 7);
+
+  /* ---------------- help is generated from the registry ---------------- */
+  K.register('helptest', {
+    n: { keys: 'N', label: 'Do the registered thing', run: () => {} },
+  });
+  N.current = 'helptest';
+  K.showHelp();
+  await sleep(60);
+  const dialog = document.querySelector('#modalBackdrop');
+  record('the help opens a dialog', dialog && !dialog.hidden);
+  record('the help lists the registered command', /Do the registered thing/.test(dialog.textContent));
+  record('the help shows its key', /<kbd>N<\/kbd>/.test(dialog.innerHTML));
+  record('the help lists the global chords', /Ctrl \+ B/.test(dialog.textContent));
+  press('Escape');
+  await sleep(60);
+  record('Escape closes the help dialog', dialog.hidden);
+
+  /* ---------------- cleanup ---------------- */
+  K.registry.delete('modaltest');
+  K.registry.delete('helptest');
+  K.registry.delete('students');
+  showView('view-dashboard', 'dashboard');
+  dash.innerHTML = '';
+  sView.innerHTML = '';
+  return out;
+}

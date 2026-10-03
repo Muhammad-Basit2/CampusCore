@@ -46,6 +46,11 @@
             <!-- Category / class tree is built at runtime from the classes table. -->
             <div class="nav-children" id="navGradesChildren"></div>
           </div>
+          <button class="nav-item" data-view="classes" role="tab" aria-selected="false">
+            <span class="nav-ico">&#9635;</span>
+            <span class="nav-label">Classes &amp; Subjects</span>
+            <kbd>Ctrl+B</kbd>
+          </button>
           <button class="nav-item" data-view="settings" role="tab" aria-selected="false">
             <span class="nav-ico">&#9881;</span>
             <span class="nav-label">Settings</span>
@@ -56,6 +61,8 @@
         <div class="sidebar-foot">
           <div class="kbd-hint">
             <div><kbd>&#8593;</kbd><kbd>&#8595;</kbd> navigate &middot; <kbd>Enter</kbd> open</div>
+            <div><kbd>N</kbd> new &middot; <kbd>E</kbd> edit &middot; <kbd>Del</kbd> delete</div>
+            <div><kbd>/</kbd> search &middot; <kbd>F1</kbd> all shortcuts</div>
           </div>
           <div class="db-path" id="dbPath" title="Database location"></div>
         </div>
@@ -81,6 +88,7 @@
           <section class="view" id="view-students" data-view="students"></section>
           <section class="view" id="view-fees" data-view="fees"></section>
           <section class="view" id="view-grades" data-view="grades"></section>
+          <section class="view" id="view-classes" data-view="classes"></section>
           <section class="view" id="view-settings" data-view="settings"></section>
         </div>
       </main>
@@ -98,12 +106,14 @@
     <div class="modal-backdrop no-print" id="modalBackdrop" hidden></div>
 
     <script src="js/ui.js"></script>
+    <script src="js/keys.js"></script>
     <script src="js/nav.js"></script>
     <script src="js/settings.js"></script>
     <script src="js/dashboard.js"></script>
     <script src="js/students.js"></script>
     <script src="js/fees.js"></script>
     <script src="js/grades.js"></script>
+    <script src="js/classes-subjects.js"></script>
     <script src="js/app.js"></script>
   </body>
 </html>

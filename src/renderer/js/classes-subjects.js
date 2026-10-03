@@ -35,6 +35,7 @@ const ClassesSubjects = {
 
     await this.loadSubjects();
     this.render();
+    this.bindKeys();
   },
 
   async loadSubjects() {
@@ -257,6 +258,55 @@ const ClassesSubjects = {
     await this.loadSubjects();
     this.render();
   },
+  /**
+   * Shortcuts for this view.
+   *
+   * This is the one view with two navigable lists at once - the class list on
+   * the left and the subject cards on the right - so the arrow keys walk both,
+   * and `e` has to work out which panel the highlight is sitting in before it
+   * knows which button to press.
+   *
+   * Classes are never created or deleted here (they appear with their first
+   * student), so the list only offers edit; the subject cards offer the full
+   * set. `[` and `]` step through classes without the arrow keys, which are
+   * busy walking both panels together.
+   */
+  bindKeys() {
+    /** The action names for whichever panel the highlight is in. */
+    const panel = () => {
+      const row = Keys.current();
+      if (!row) return { edit: 'edit-subject', remove: 'delete-subject' };
+      return row.classList.contains('cs-class-row')
+        ? { edit: 'edit-class', remove: null }
+        : { edit: 'edit-subject', remove: 'delete-subject' };
+    };
+
+    Keys.register('classes', {
+      n: { keys: 'N', label: 'Add a subject to the selected class', run: () => Keys.click('#csAddSubject') },
+      e: { keys: 'E', label: 'Edit the highlighted class or subject', run: () => Keys.act(panel().edit) },
+      d: {
+        keys: 'Del',
+        label: 'Delete the highlighted subject',
+        run: () => {
+          const action = panel().remove;
+          return action ? Keys.act(action) : false;
+        },
+      },
+      ']': { keys: ']', label: 'Select the next class', run: () => this.stepClass(1) },
+      '[': { keys: '[', label: 'Select the previous class', run: () => this.stepClass(-1) },
+      x: { keys: 'X', label: 'Export classes and subjects to Excel', run: () => $('#csExpData').click() },
+    });
+  },
+
+  /** Moves the selection through the class list without touching the highlight. */
+  stepClass(step) {
+    if (!this.classes.length) return;
+    const index = this.classes.findIndex((c) => c.id === this.activeId);
+    const next = this.classes[Math.min(Math.max(index + step, 0), this.classes.length - 1)];
+    if (!next || next.id === this.activeId) return;
+    this.select(next.id);
+  },
+
   /* ------------------------------------------------------------------ */
   /* Class editing                                                       */
   /* ------------------------------------------------------------------ */
@@ -317,7 +367,12 @@ const ClassesSubjects = {
                 } finally {
                   this.busy = false;
                 }
-                if (saved) await this.load();
+                // load() below refreshes this view; App then ignores the
+                // data:changed broadcast for the same write.
+                if (saved) {
+                  selfRendered();
+                  await this.load();
+                }
               }),
           }),
         ]),
@@ -428,7 +483,10 @@ const ClassesSubjects = {
                 } finally {
                   this.busy = false;
                 }
-                if (saved) await this.load();
+                if (saved) {
+                  selfRendered();
+                  await this.load();
+                }
               }),
           }),
         ]),
@@ -501,6 +559,7 @@ const ClassesSubjects = {
 
     await window.api.subjects.remove(target.id);
     notify.ok('Subject deleted', target.name + ' has been removed.');
+    selfRendered();
     await this.load();
   },
 };

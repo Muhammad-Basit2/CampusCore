@@ -41,8 +41,10 @@ function buildMenu() {
       label: 'File',
       submenu: [
         // NOTE: accelerators are intentionally omitted here - the shortcuts
-        // (Ctrl+D/S/I/R/G) are owned by the renderer's keyboard listener so
-        // that they work uniformly regardless of focus inside a view.
+        // (Ctrl+D/S/I/R/B/G) are owned by the renderer's keyboard layer
+        // (src/renderer/js/keys.js) so that they work uniformly regardless of
+        // focus inside a view, and so F1 can show the same list the dispatcher
+        // accepts. Registering them here too would fire both paths at once.
         { label: 'Dashboard', click: () => send('nav:goto', 'dashboard') },
         { label: 'Students', click: () => send('nav:goto', 'students') },
         { label: 'Fee & Invoicing', click: () => send('nav:goto', 'fees') },

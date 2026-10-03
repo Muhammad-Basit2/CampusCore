@@ -33,6 +33,7 @@ function check(name, condition, detail) {
 
 const html = read('src/renderer/index.html');
 const navJs = read('src/renderer/js/nav.js');
+const keysJs = read('src/renderer/js/keys.js');
 const viewJs = read('src/renderer/js/classes-subjects.js');
 const preload = read('src/preload/preload.js');
 const ipc = read('src/main/ipc.js');
@@ -47,12 +48,22 @@ check('view section exists', html.includes('id="view-classes"'));
 check('view uses same data-view', /id="view-classes" data-view="classes"/.test(html));
 check('script tag added', html.includes('js/classes-subjects.js'));
 check('nav item has kbd hint', /data-view="classes"[\s\S]*?<kbd>/.test(html));
+check('keys.js loaded before the views that use it',
+  html.indexOf('js/keys.js') > -1 && html.indexOf('js/keys.js') < html.indexOf('js/nav.js'));
 
 console.log('\n=== nav.js router ===');
-check('VIEWS entry registered', navJs.includes("classes: { title: 'Classes & Subjects'"));
+check('VIEWS entry registered', /classes:\s*\{\s*title:\s*'Classes & Subjects'/.test(navJs));
 check('router renders the view', navJs.includes('ClassesSubjects.load()'));
-check('keyboard shortcut mapped', /b:\s*'classes'/.test(navJs));
-check('shortcut listed in help', navJs.includes('Ctrl + B'));
+// Shortcuts moved out of nav.js into the Keys registry when the two competing
+// document-level handlers were merged, so they are asserted there now.
+check('router delegates shortcuts to Keys', navJs.includes('Keys.bind()'));
+check('help is generated from the registry', navJs.includes('Keys.showHelp()'));
+
+console.log('\n=== keys.js ===');
+check('view registers its commands', keysJs === null ? false : viewJs.includes("Keys.register('classes'"));
+check('keyboard shortcut mapped', /b:\s*'nav\.classes'/.test(keysJs));
+check('shortcut listed in help', keysJs.includes('Ctrl + B'));
+check('Classes & Subjects has a help section', keysJs.includes("classes: 'Classes &amp; Subjects'"));
 
 console.log('\n=== main.js application menu ===');
 check('menu item registered', mainJs.includes("send('nav:goto', 'classes')"));
@@ -90,7 +101,16 @@ console.log('\n=== view -> preload method coverage ===');
 const used = new Set(
   [...viewJs.matchAll(/window\.api\.(classes|subjects)\.(\w+)/g)].map((m) => `${m[1]}.${m[2]}`),
 );
-check('view actually calls the API', used.size >= 8, `${used.size} distinct calls`);
+// The view is expected to reach both namespaces it was built against; naming
+// the calls exactly means a deleted call site cannot quietly pass unnoticed.
+const EXPECTED_VIEW_CALLS = [
+  'classes.list', 'classes.update',
+  'subjects.create', 'subjects.list', 'subjects.remove', 'subjects.update',
+];
+check('view actually calls the API', used.size === EXPECTED_VIEW_CALLS.length, `${used.size} distinct calls`);
+for (const call of EXPECTED_VIEW_CALLS) {
+  check(`view still calls ${call}`, used.has(call));
+}
 
 // Pull the method names out of each preload namespace block.
 for (const ns of ['classes', 'subjects']) {

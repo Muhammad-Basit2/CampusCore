@@ -95,6 +95,28 @@ const Fees = {
         notify.error('Export failed', err.message);
       }
     });
+
+    this.bindKeys();
+  },
+
+  /**
+   * Shortcuts for this view.
+   *
+   * Invoice rows carry five actions, so each shortcut names its own: `e` edits,
+   * `p` records a payment, `a` prints the A4 invoice and `t` the thermal
+   * receipt. They all go through Keys.act(), which clicks the button a mouse
+   * would, so there is exactly one implementation of each behaviour.
+   */
+  bindKeys() {
+    Keys.register('fees', {
+      n: { keys: 'N', label: 'New invoice', run: () => $('#addInvoice').click() },
+      e: { keys: 'E', label: 'Edit the highlighted invoice', run: () => Keys.act('edit') },
+      d: { keys: 'Del', label: 'Delete the highlighted invoice', run: () => Keys.act('delete') },
+      p: { keys: 'P', label: 'Record a payment', run: () => Keys.act('pay') },
+      a: { keys: 'A', label: 'Print the A4 invoice', run: () => Keys.act('a4') },
+      t: { keys: 'T', label: 'Print the thermal receipt', run: () => Keys.act('thermal') },
+      x: { keys: 'X', label: 'Export invoices to Excel', run: () => $('#expInvoices').click() },
+    });
   },
 
   row(r) {
@@ -334,6 +356,9 @@ const Fees = {
       notify.ok('Invoice created', created.invoiceNo + ' is ready to print.');
     }
     close();
+    // This view reloads itself below; tell App so the data:changed broadcast for
+    // the same write does not re-query and re-render the invoice list.
+    selfRendered();
     await this.load();
   },
 
@@ -441,6 +466,7 @@ const Fees = {
     });
     notify.ok('Payment recorded', money(amount) + ' received against ' + invoice.invoiceNo + '.');
     close();
+    selfRendered();
     await this.load();
   },
 
@@ -455,6 +481,7 @@ const Fees = {
     if (!ok) return;
     await window.api.invoices.remove(invoice.id);
     notify.ok('Invoice deleted', invoice.invoiceNo + ' has been removed.');
+    selfRendered();
     await this.load();
   },
 

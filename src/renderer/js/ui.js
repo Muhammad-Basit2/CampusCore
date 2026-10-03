@@ -264,6 +264,12 @@ function confirmDialog({ title, message, detail = '', confirmText = 'Confirm', d
         ]),
       ]),
     );
+    // Focus the confirm button so the dialog is fully operable from the
+    // keyboard: Enter confirms, Escape cancels (handled by openModal) and Tab
+    // reaches Cancel. Without this the caret stays on whatever was focused
+    // underneath, so Enter would re-trigger the action that opened the dialog.
+    const confirm = $('.modal-foot .btn.primary, .modal-foot .btn.danger', $('#modalBackdrop'));
+    if (confirm) confirm.focus();
     // Resolve false if dismissed via Escape or a backdrop click.
     const backdrop = $('#modalBackdrop');
     const observer = new MutationObserver(() => {
@@ -292,6 +298,17 @@ async function withBusy(button, fn) {
     button.disabled = false;
     button.innerHTML = original;
   }
+}
+
+/**
+ * Tells the bootstrap that this view has just re-rendered after a write.
+ *
+ * Defined here rather than called as App.markSelfRender() at every call site so
+ * that a view is safe to render before the bootstrap has run - the renderer
+ * test harness loads the view modules on their own, without app.js.
+ */
+function selfRendered() {
+  if (typeof App !== 'undefined' && App.markSelfRender) App.markSelfRender();
 }
 
 /* ------------------------------------------------------------------ */

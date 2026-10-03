@@ -16,6 +16,11 @@ const VIEWS = {
     subtitle: 'Enter marks and print report cards',
     render: (params) => Grades.load(params),
   },
+  classes: {
+    title: 'Classes & Subjects',
+    subtitle: 'Manage class categories and the subjects taught in each',
+    render: () => ClassesSubjects.load(),
+  },
   settings: { title: 'Settings', subtitle: 'School profile, branding and printing', render: () => Settings.load() },
 };
 
@@ -41,9 +46,9 @@ const Nav = {
     });
     on($('#nav'), 'click', '.nav-cat', (e, btn) => this.toggleGroup(btn));
     on($('#nav'), 'click', '.nav-class', (e, btn) => this.selectClass(btn));
-    // Editing a class from the tree is the only reachable route to a class's
-    // settings: there is no Classes & Subjects view wired into the router, so
-    // the tree is where a class can be renamed, re-ordered or re-categorised.
+    // Editing a class from the tree is a shortcut to the class's settings. The
+    // full Classes & Subjects view owns the same dialog, so both routes open
+    // one form rather than two copies of it.
     on($('#nav'), 'click', '.nav-class-edit', (e, btn) => {
       e.stopPropagation();
       const cls = this.classOf(btn.dataset.classId);
@@ -377,6 +382,10 @@ const Nav = {
     } catch (err) {
       notify.error(`Could not load ${def.title}`, err.message);
     }
+    // Every view rebuilds its rows from scratch, which detaches whatever the
+    // keyboard highlight was sitting on. Re-anchor it by id so the user keeps
+    // their place across a view switch or a refresh.
+    Keys.restore();
   },
 
   /**
@@ -418,115 +427,22 @@ const Nav = {
 
   /**
    * Global shortcuts.
+   *
+   * Every keystroke is resolved by Keys, which owns one document listener and a
+   * registry of per-view commands. This used to be a second, independent
+   * handler here; the two fought over the same keys (both claimed Ctrl+R, both
+   * moved a row highlight) and whichever bound last won. The router now only
+   * decides *where* to go and delegates every key to that single layer.
+   *
    *   Ctrl+D Dashboard  Ctrl+S Students  Ctrl+I Fees
    *   Ctrl+R Grades     Ctrl+G Settings   Ctrl+B Classes
-   *   F1 Help
-   *   Up/Down move the row highlight, Enter opens the highlighted row.
+   *   F1 Help           /  Search        Up/Down, Enter: records
    */
   bindShortcuts() {
-    document.addEventListener('keydown', (e) => {
-      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-
-      if (e.key === 'F1') {
-        e.preventDefault();
-        this.showShortcuts();
-        return;
-      }
-
-      if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
-        const map = { d: 'dashboard', s: 'students', i: 'fees', r: 'grades', g: 'settings' };
-        const target = map[e.key.toLowerCase()];
-        if (target) {
-          e.preventDefault();
-          this.go(target);
-          return;
-        }
-      }
-
-      // Modals handle Escape themselves (see openModal in ui.js).
-      if (!$('#modalBackdrop').hidden) return;
-
-      if (e.key === 'Escape') {
-        const active = document.activeElement;
-        if (!typing && active && active.blur) active.blur();
-        return;
-      }
-      if (typing) return;
-
-      // -------------------- row navigation -------------------------
-      const table = this.focusedTable();
-      if (!table) return;
-
-      const rows = $$('tbody tr', table).filter((r) => !r.classList.contains('empty-row'));
-      if (!rows.length) return;
-
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        const current = table.querySelector('tr.is-active');
-        const index = rows.indexOf(current);
-        const next = e.key === 'ArrowDown'
-          ? Math.min(index + 1, rows.length - 1)
-          : Math.max(index - 1, 0);
-        rows.forEach((r) => r.classList.remove('is-active'));
-        const target = rows[index === -1 ? 0 : next];
-        target.classList.add('is-active');
-        target.scrollIntoView({ block: 'nearest' });
-      }
-
-      if (e.key === 'Enter') {
-        const activeRow = table.querySelector('tr.is-active');
-        if (activeRow) {
-          e.preventDefault();
-          activeRow.click();
-        }
-      }
-    });
-
-    // Clicking inside a table makes it the keyboard target.
-    document.addEventListener('click', (e) => {
-      const table = e.target.closest('table');
-      if (!table) return;
-      $$('tr.is-active').forEach((r) => r.classList.remove('is-active'));
-      const row = e.target.closest('tbody tr');
-      if (row && !row.classList.contains('empty-row')) row.classList.add('is-active');
-    });
-  },
-
-  /** The table under the caret, or the first table in the active view. */
-  focusedTable() {
-    const active = document.activeElement;
-    const own = active && active.closest ? active.closest('table') : null;
-    if (own) return own;
-    return $$('.view.active table')[0] || null;
+    Keys.bind();
   },
 
   showShortcuts() {
-    const rows = [
-      ['Ctrl + D', 'Go to Dashboard'],
-      ['Ctrl + S', 'Go to Students'],
-      ['Ctrl + I', 'Go to Fee &amp; Invoicing'],
-      ['Ctrl + R', 'Go to Grades &amp; Reports'],
-      ['Ctrl + G', 'Go to Settings'],
-      ['Ctrl + B', 'Go to Classes &amp; Subjects'],
-      ['Ctrl + Shift + R', 'Reload the application window'],
-      ['&uarr; / &darr;', 'Move between table rows'],
-      ['Enter', 'Open the highlighted row'],
-      ['F1', 'Show this help'],
-      ['Esc', 'Close a dialog / clear focus'],
-    ];
-    openModal((close) =>
-      el('div', { class: 'modal narrow' }, [
-        el('div', { class: 'modal-head' }, [
-          el('h3', { text: 'Keyboard Shortcuts' }),
-          el('button', { class: 'btn ghost sm', text: 'Close', onClick: close }),
-        ]),
-        el('div', { class: 'modal-body' }, [
-          el('table', {
-            class: 'shortcut-table',
-            html: rows.map(([k, d]) => `<tr><td><kbd>${k}</kbd></td><td class="muted">${d}</td></tr>`).join(''),
-          }),
-        ]),
-      ]),
-    );
+    Keys.showHelp();
   },
 };

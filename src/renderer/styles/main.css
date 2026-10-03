@@ -572,6 +572,44 @@ table.marks tr.is-active td { background: rgba(124, 92, 255, 0.18); }
   font-family: var(--mono); background: rgba(255, 255, 255, 0.07);
   border: 1px solid var(--line); border-radius: 5px; padding: 2px 7px; font-size: 11.5px;
 }
+
+/* The F1 dialog, generated from the Keys registry. Sections stack so a view
+   with many shortcuts stays readable on one column. */
+.shortcuts { display: grid; gap: 18px; }
+.shortcut-section h4 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--muted); margin: 0 0 8px;
+}
+.shortcut-list { margin: 0; display: grid; gap: 2px; }
+.shortcut-list > div {
+  display: grid; grid-template-columns: 128px 1fr; align-items: center;
+  gap: 12px; padding: 5px 0; font-size: 13px;
+}
+.shortcut-list dt { margin: 0; }
+.shortcut-list dd { margin: 0; color: var(--muted); }
+.shortcut-list kbd {
+  font-family: var(--mono); background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line); border-radius: 5px;
+  padding: 2px 7px; font-size: 11.5px; white-space: nowrap;
+}
+
+/* The record the keyboard is pointing at, and what E / Del will act on.
+   Deliberately a different class from is-active, which in the classes panel
+   already means "this is the class whose subjects are loaded": conflating them
+   would make the highlight appear to change which class is selected. */
+tbody tr.is-kbd {
+  background: rgba(124, 92, 255, 0.2);
+  box-shadow: inset 3px 0 0 var(--brand-2);
+}
+/* A selected class can also be the highlighted row; the outline has to win over
+   the background tint without losing the meaning of the selection. */
+.cs-class-row.is-kbd {
+  box-shadow: inset 3px 0 0 var(--brand-2), inset 0 0 0 1px var(--brand-2);
+}
+.cs-subject-card.is-kbd {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand), 0 8px 18px rgba(79, 140, 255, 0.16);
+}
 /* ======================= CLASSES & SUBJECTS ======================= */
 /* Split-panel manager: class list on the left, subject grid on the right */
 .cs-split {
