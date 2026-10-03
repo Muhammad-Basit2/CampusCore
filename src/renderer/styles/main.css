@@ -273,7 +273,7 @@ table.res-table td.muted { color: var(--muted); }
 }
 
 /* ============================== TOPBAR ============================== */
-.main { display: flex; flex-direction: column; min-width: 0; }
+.main { display: flex; flex-direction: column; min-width: 0; overflow: scroll; scrollbar-width: thin; }
 .topbar {
   display: flex; align-items: center; gap: 16px; padding: 16px 26px;
   border-bottom: 1px solid var(--line);
