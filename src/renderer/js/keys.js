@@ -326,7 +326,23 @@ const Keys = {
 
     // Inside a field, Enter belongs to the field. The layer only claims it for
     // Ctrl+Enter, which is "submit whatever I am editing".
-    if (typing && e.key === 'Enter' && !chordName) return;
+    if (typing && e.key === 'Enter' && !chordName) {
+      if (e.ctrlKey || e.metaKey) {
+        const viewName = (typeof Nav === 'undefined' ? '' : Nav.current) || '';
+        const currentView = $(`#view-${viewName}`);
+        if (currentView) {
+          const saveBtn = currentView.querySelector(
+            '#saveSettings, #saveMarks, #addSubject, button.btn.primary[data-act="save"]'
+          );
+          if (saveBtn && !saveBtn.disabled) {
+            e.preventDefault();
+            saveBtn.click();
+            return;
+          }
+        }
+      }
+      return;
+    }
     // Any other key inside a field belongs to the field too, unless it is a
     // chord this app defines.
     if (typing && !chordName && !(e.ctrlKey || e.metaKey)) return;

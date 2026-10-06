@@ -143,6 +143,22 @@ const Settings = {
 
     $('#saveSettings', view).addEventListener('click', (e) => withBusy(e.currentTarget, () => this.save(view)));
 
+    on(view, 'keydown', 'input[data-key]', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const saveBtn = $('#saveSettings', view);
+        if (saveBtn && !saveBtn.disabled) saveBtn.click();
+      }
+    });
+
+    on(view, 'keydown', 'textarea[data-key]', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        const saveBtn = $('#saveSettings', view);
+        if (saveBtn && !saveBtn.disabled) saveBtn.click();
+      }
+    });
+
     $('#resetSettings', view).addEventListener('click', async () => {
       const ok = await confirmDialog({
         title: 'Restore default settings',

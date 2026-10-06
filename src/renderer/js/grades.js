@@ -496,6 +496,12 @@ const Grades = {
     // #marksHost is rebuilt wholesale by loadGrid(), so these are fresh nodes
     // and a plain binding is correct here.
     on(host, 'keydown', 'input.mark-input', (e, input) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        const saveBtn = $('#saveMarks', document.body);
+        if (saveBtn && !saveBtn.disabled) saveBtn.click();
+        return;
+      }
       const idx = inputs.indexOf(input);
       if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
         e.preventDefault();
@@ -773,9 +779,21 @@ const Grades = {
 
     // `#addSubject` is re-created by the innerHTML above, so it carries no
     // listeners forward and a plain binding is safe here.
-    $('#addSubject', body).addEventListener('click', (e) =>
+    const addSubjectBtn = $('#addSubject', body);
+    addSubjectBtn.addEventListener('click', (e) =>
       withBusy(e.currentTarget, () => this.addSubject()),
     );
+
+    const onAddSubjectKey = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (addSubjectBtn && !addSubjectBtn.disabled) addSubjectBtn.click();
+      }
+    };
+    const subNameInput = $('#subName', body);
+    const subMaxInput = $('#subMax', body);
+    if (subNameInput) subNameInput.addEventListener('keydown', onAddSubjectKey);
+    if (subMaxInput) subMaxInput.addEventListener('keydown', onAddSubjectKey);
 
     $('#expSubjects', body).addEventListener('click', async () => {
       try {

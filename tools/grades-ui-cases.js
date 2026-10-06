@@ -1226,6 +1226,33 @@ async function keyboardCases(out, { record, eq, sleep }) {
   await sleep(60);
   record('Escape closes the help dialog', dialog.hidden);
 
+  /* ---------------- Enter inside a modal submits automatically ---------------- */
+  let modalSubmitted = false;
+  openModal((close) =>
+    el('div', { class: 'modal narrow' }, [
+      el('div', { class: 'modal-body' }, [
+        el('input', { id: 'modalInputTest', value: 'New Name' }),
+      ]),
+      el('div', { class: 'modal-foot' }, [
+        el('button', { class: 'btn ghost', text: 'Cancel', onClick: close }),
+        el('button', {
+          class: 'btn primary',
+          text: 'Save',
+          onClick: () => {
+            modalSubmitted = true;
+            close();
+          },
+        }),
+      ]),
+    ]),
+  );
+  const mInput = document.querySelector('#modalInputTest');
+  mInput.focus();
+  press('Enter');
+  await sleep(60);
+  record('Enter in modal input submits and saves automatically', modalSubmitted);
+  record('modal closed after Enter save', $('#modalBackdrop').hidden);
+
   /* ---------------- cleanup ---------------- */
   K.registry.delete('modaltest');
   K.registry.delete('helptest');

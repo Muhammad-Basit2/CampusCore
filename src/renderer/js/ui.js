@@ -226,6 +226,26 @@ function openModal(render) {
     if (e.key === 'Escape') {
       e.stopPropagation();
       close();
+      return;
+    }
+    if (e.key === 'Enter') {
+      const target = e.target;
+      // If focused on a button or link, let native keyboard activation take place
+      if (target && (target.tagName === 'BUTTON' || target.tagName === 'A')) {
+        return;
+      }
+      // If typing in a multiline textarea, save on Ctrl+Enter / Cmd+Enter
+      if (target && target.tagName === 'TEXTAREA') {
+        if (!e.ctrlKey && !e.metaKey) return;
+      }
+      const submit = backdrop.querySelector(
+        '.modal-foot .btn.primary, .modal-foot .btn.danger, .modal-foot button[type="submit"], .modal .btn.primary'
+      );
+      if (submit && !submit.disabled) {
+        e.preventDefault();
+        e.stopPropagation();
+        submit.click();
+      }
     }
   }
   document.addEventListener('keydown', onKey, true);
