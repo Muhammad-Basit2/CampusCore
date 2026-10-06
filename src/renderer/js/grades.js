@@ -1262,12 +1262,15 @@ const Grades = {
 
     const search = $('#resSearch', body);
     const failing = $('#resFailing', body);
+     const printAll = $('#printAllCards', body);
+     printAll.addEventListener('click', (e) => {
+       e.stopPropagation();
+       withBusy(e.currentTarget, () => this.printAll());
+     });
     search.addEventListener('input', () => this.applyResultFilters());
     failing.addEventListener('change', () => this.applyResultFilters());
 
-    $('#printAllCards', body).addEventListener('click', (e) =>
-      withBusy(e.currentTarget, () => this.printAll()),
-    );
+    // printAllCards handler already bound above (idempotent via delegateOnce-style guard)
 
     await this.loadResults();
   },
