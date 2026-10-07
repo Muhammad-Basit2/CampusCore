@@ -1401,6 +1401,261 @@ function registerIpcHandlers(ctx) {
       settings: await getSettings(),
     };
   });
+
+  /* ======================= Teachers ======================= */
+
+  handle('teachers:list', async ({ search = '' } = {}) => {
+    const q = `%${str(search, 'Search', { max: 120 })}%`;
+    return db.all(
+      `SELECT * FROM teachers
+        WHERE fullName LIKE ? COLLATE NOCASE
+           OR employeeCode LIKE ? COLLATE NOCASE
+           OR specialization LIKE ? COLLATE NOCASE
+        ORDER BY fullName COLLATE NOCASE ASC`,
+      [q, q, q],
+    );
+  });
+
+  handle('teachers:get', async ({ id: tid } = {}) => {
+    const teacherId = id(tid, 'Teacher id');
+    const row = await db.get('SELECT * FROM teachers WHERE id = ?', [teacherId]);
+    if (!row) throw new ValidationError('Teacher not found');
+    return row;
+  });
+
+  handle('teachers:create', async (payload = {}) => {
+    const fullName       = str(payload.fullName, 'Full name', { required: true, max: 120 });
+    const employeeCode   = str(payload.employeeCode, 'Employee code', { required: true, max: 40 });
+    const specialization = str(payload.specialization, 'Specialization', { max: 120 });
+    const phone          = str(payload.phone, 'Phone', { max: 40 });
+    const email          = str(payload.email, 'Email', { max: 120 });
+    const address        = str(payload.address, 'Address', { max: 300 });
+    const joiningDate    = str(payload.joiningDate, 'Joining date', { max: 20 });
+    const baseSalary     = num(payload.baseSalary, 'Base salary', { min: 0, max: 1e9 });
+
+    const dup = await db.get(
+      'SELECT id FROM teachers WHERE employeeCode = ? COLLATE NOCASE',
+      [employeeCode],
+    );
+    if (dup) throw new ValidationError(`Employee code "${employeeCode}" already exists`);
+
+    const res = await db.run(
+      `INSERT INTO teachers (fullName, employeeCode, specialization, phone, email, address, joiningDate, baseSalary)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [fullName, employeeCode, specialization, phone, email, address, joiningDate, baseSalary],
+    );
+    notify(ctx, 'teachers');
+    return db.get('SELECT * FROM teachers WHERE id = ?', [res.lastID]);
+  });
+
+  handle('teachers:update', async (payload = {}) => {
+    const teacherId = id(payload.id, 'Teacher id');
+    const existing  = await db.get('SELECT * FROM teachers WHERE id = ?', [teacherId]);
+    if (!existing) throw new ValidationError('Teacher not found');
+
+    const fullName       = str(payload.fullName, 'Full name', { required: true, max: 120 });
+    const employeeCode   = str(payload.employeeCode, 'Employee code', { required: true, max: 40 });
+    const specialization = str(payload.specialization, 'Specialization', { max: 120 });
+    const phone          = str(payload.phone, 'Phone', { max: 40 });
+    const email          = str(payload.email, 'Email', { max: 120 });
+    const address        = str(payload.address, 'Address', { max: 300 });
+    const joiningDate    = str(payload.joiningDate, 'Joining date', { max: 20 });
+    const baseSalary     = num(payload.baseSalary, 'Base salary', { min: 0, max: 1e9 });
+
+    const dup = await db.get(
+      'SELECT id FROM teachers WHERE employeeCode = ? COLLATE NOCASE AND id <> ?',
+      [employeeCode, teacherId],
+    );
+    if (dup) throw new ValidationError(`Employee code "${employeeCode}" already exists`);
+
+    await db.run(
+      `UPDATE teachers SET fullName = ?, employeeCode = ?, specialization = ?,
+            phone = ?, email = ?, address = ?, joiningDate = ?, baseSalary = ?
+       WHERE id = ?`,
+      [fullName, employeeCode, specialization, phone, email, address, joiningDate, baseSalary, teacherId],
+    );
+    notify(ctx, 'teachers');
+    return db.get('SELECT * FROM teachers WHERE id = ?', [teacherId]);
+  });
+
+  handle('teachers:remove', async ({ id: tid } = {}) => {
+    const teacherId = id(tid, 'Teacher id');
+    const row = await db.get('SELECT * FROM teachers WHERE id = ?', [teacherId]);
+    if (!row) throw new ValidationError('Teacher not found');
+    await db.run('DELETE FROM teachers WHERE id = ?', [teacherId]);
+    notify(ctx, 'teachers');
+    return { deleted: true };
+  });
+
+  /* =================== Teacher Attendance ================= */
+
+  handle('teacher-attendance:list', async ({ teacherId, dateFrom = '', dateTo = '' } = {}) => {
+    const tid = teacherId ? id(teacherId, 'Teacher id') : null;
+    let sql = 'SELECT ta.*, t.fullName, t.employeeCode FROM teacher_attendance ta JOIN teachers t ON t.id = ta.teacherId WHERE 1=1';
+    const params = [];
+    if (tid) { sql += ' AND ta.teacherId = ?'; params.push(tid); }
+    if (dateFrom) { sql += ' AND ta.date >= ?'; params.push(dateFrom); }
+    if (dateTo)   { sql += ' AND ta.date <= ?'; params.push(dateTo); }
+    sql += ' ORDER BY ta.date DESC, ta.id DESC';
+    return db.all(sql, params);
+  });
+
+  handle('teacher-attendance:upsert', async (payload = {}) => {
+    const teacherId = id(payload.teacherId, 'Teacher id');
+    const date = str(payload.date, 'Date', { required: true, max: 20 });
+    const status = oneOf(payload.status, ['Present', 'Absent', 'Late', 'Leave'], 'Present');
+    await db.get('SELECT id FROM teachers WHERE id = ?', [teacherId]);
+    await db.run(
+      `INSERT INTO teacher_attendance (teacherId, date, status) VALUES (?, ?, ?)
+       ON CONFLICT(teacherId, date) DO UPDATE SET status = excluded.status`,
+      [teacherId, date, status],
+    );
+    notify(ctx, 'teacher-attendance');
+    return { teacherId, date, status };
+  });
+
+  handle('teacher-attendance:remove', async ({ id: aid } = {}) => {
+    const attId = id(aid, 'Attendance id');
+    const row = await db.get('SELECT * FROM teacher_attendance WHERE id = ?', [attId]);
+    if (!row) throw new ValidationError('Attendance record not found');
+    await db.run('DELETE FROM teacher_attendance WHERE id = ?', [attId]);
+    notify(ctx, 'teacher-attendance');
+    return { deleted: true };
+  });
+
+  /* =================== Teacher Payroll ================= */
+
+  handle('teacher-payroll:list', async ({ teacherId, monthYear = '' } = {}) => {
+    let sql = 'SELECT tp.*, t.fullName, t.employeeCode FROM teacher_payroll tp JOIN teachers t ON t.id = tp.teacherId WHERE 1=1';
+    const params = [];
+    if (teacherId) { sql += ' AND tp.teacherId = ?'; params.push(id(teacherId, 'Teacher id')); }
+    if (monthYear) { sql += ' AND tp.monthYear = ?'; params.push(monthYear); }
+    sql += ' ORDER BY tp.monthYear DESC, tp.id DESC';
+    return db.all(sql, params);
+  });
+
+  handle('teacher-payroll:upsert', async (payload = {}) => {
+    const teacherId = id(payload.teacherId, 'Teacher id');
+    const monthYear = str(payload.monthYear, 'Month/year', { required: true, max: 20 });
+    const totalDays = num(payload.totalDays, 'Total days', { min: 1, max: 366 });
+    const presentDays = num(payload.presentDays, 'Present days', { min: 0, max: 366 });
+    const deductions = num(payload.deductions ?? 0, 'Deductions', { min: 0 });
+    const bonus = num(payload.bonus ?? 0, 'Bonus', { min: 0 });
+    const status = oneOf(payload.status, ['Pending', 'Paid'], 'Pending');
+    const paymentDate = str(payload.paymentDate ?? '', 'Payment date', { max: 20 });
+
+    await db.get('SELECT id FROM teachers WHERE id = ?', [teacherId]);
+    const baseSalary = (await db.get('SELECT baseSalary FROM teachers WHERE id = ?', [teacherId])).baseSalary;
+    const netSalary = round(baseSalary * presentDays / (totalDays || 1) - deductions + bonus, 2);
+
+    await db.run(
+      `INSERT INTO teacher_payroll (teacherId, monthYear, totalDays, presentDays, deductions, bonus, netSalary, status, paymentDate)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(teacherId, monthYear) DO UPDATE SET
+         totalDays = excluded.totalDays, presentDays = excluded.presentDays,
+         deductions = excluded.deductions, bonus = excluded.bonus,
+         netSalary = excluded.netSalary, status = excluded.status,
+         paymentDate = excluded.paymentDate`,
+      [teacherId, monthYear, totalDays, presentDays, deductions, bonus, netSalary, status, paymentDate],
+    );
+    notify(ctx, 'teacher-payroll');
+    return { teacherId, monthYear, netSalary };
+  });
+
+  handle('teacher-payroll:remove', async ({ id: pid } = {}) => {
+    const payrollId = id(pid, 'Payroll id');
+    const row = await db.get('SELECT * FROM teacher_payroll WHERE id = ?', [payrollId]);
+    if (!row) throw new ValidationError('Payroll record not found');
+    await db.run('DELETE FROM teacher_payroll WHERE id = ?', [payrollId]);
+    notify(ctx, 'teacher-payroll');
+    return { deleted: true };
+  });
+
+  /* =================== Student Attendance ================= */
+
+  handle('student-attendance:list', async ({ studentId, classId, dateFrom = '', dateTo = '' } = {}) => {
+    const sid = studentId ? id(studentId, 'Student id') : null;
+    const cid = classId   ? id(classId, 'Class id')   : null;
+    // Use subquery to get unique records per student per date (latest record wins)
+    let sql = `SELECT sa.id, sa.studentId, sa.classId, sa.date, sa.status,
+               s.name AS studentName, s.rollNo, c.name AS className
+               FROM student_attendance sa
+               JOIN students s ON s.id = sa.studentId
+               LEFT JOIN classes c ON c.id = sa.classId
+               WHERE sa.id IN (
+                 SELECT MAX(sa2.id)
+                 FROM student_attendance sa2
+                 WHERE 1=1`;
+    const params = [];
+    if (sid) { sql += ' AND sa2.studentId = ?'; params.push(sid); }
+    if (cid) { sql += ' AND sa2.classId = ?'; params.push(cid); }
+    if (dateFrom) { sql += ' AND sa2.date >= ?'; params.push(dateFrom); }
+    if (dateTo)   { sql += ' AND sa2.date <= ?'; params.push(dateTo); }
+    sql += ` GROUP BY sa2.studentId, sa2.date
+               )`;
+    if (sid) { sql += ' AND sa.studentId = ?'; params.push(sid); }
+    if (cid) { sql += ' AND sa.classId = ?'; params.push(cid); }
+    if (dateFrom) { sql += ' AND sa.date >= ?'; params.push(dateFrom); }
+    if (dateTo)   { sql += ' AND sa.date <= ?'; params.push(dateTo); }
+    sql += ' ORDER BY sa.date DESC, sa.studentId ASC';
+    return db.all(sql, params);
+  });
+
+  handle('student-attendance:upsert', async (payload = {}) => {
+    const studentId = id(payload.studentId, 'Student id');
+    const classId   = payload.classId ? id(payload.classId, 'Class id') : null;
+    const date      = str(payload.date, 'Date', { required: true, max: 20 });
+    const status    = oneOf(payload.status, ['Present', 'Absent', 'Late'], 'Present');
+    await db.get('SELECT id FROM students WHERE id = ?', [studentId]);
+    if (classId) await db.get('SELECT id FROM classes WHERE id = ?', [classId]);
+
+    // Atomic upsert using SQLite INSERT OR REPLACE — single round-trip, no race condition
+    await db.run(
+      `INSERT INTO student_attendance (studentId, classId, date, status)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(studentId, classId, date)
+       DO UPDATE SET status = excluded.status, classId = excluded.classId`,
+      [studentId, classId, date, status],
+    );
+
+    notify(ctx, 'student-attendance');
+    return { studentId, classId, date, status };
+  });
+
+  handle('student-attendance:remove', async ({ id: aid } = {}) => {
+    const attId = id(aid, 'Attendance id');
+    const row = await db.get('SELECT * FROM student_attendance WHERE id = ?', [attId]);
+    if (!row) throw new ValidationError('Attendance record not found');
+    await db.run('DELETE FROM student_attendance WHERE id = ?', [attId]);
+    notify(ctx, 'student-attendance');
+    return { deleted: true };
+  });
+
+  handle('student-attendance:bulk-update', async ({ date, updates } = {}) => {
+    const d = str(date, 'Date', { required: true, max: 20 });
+    if (!Array.isArray(updates) || !updates.length) throw new ValidationError('Updates required');
+    const rows = await Promise.all(
+      updates.map(async (item) => {
+        const studentId = id(item.studentId, 'Student id');
+        const classId = item.classId ? id(item.classId, 'Class id') : null;
+        const status = oneOf(item.status, ['Present', 'Absent', 'Late'], 'Present');
+        await db.get('SELECT id FROM students WHERE id = ?', [studentId]);
+        if (classId) await db.get('SELECT id FROM classes WHERE id = ?', [classId]);
+
+        // Atomic upsert using INSERT OR REPLACE — single round-trip per row
+        await db.run(
+          `INSERT INTO student_attendance (studentId, classId, date, status)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(studentId, classId, date)
+           DO UPDATE SET status = excluded.status, classId = excluded.classId`,
+          [studentId, classId, d, status],
+        );
+        return { studentId, classId, date: d, status };
+      }),
+    );
+    notify(ctx, 'student-attendance');
+    return { saved: rows.length };
+  });
 }
 
 /** Invoice number generator shared by the handler and the form pre-fill. */

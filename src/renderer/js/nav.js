@@ -21,6 +21,26 @@ const VIEWS = {
     subtitle: 'Manage class categories and the subjects taught in each',
     render: () => ClassesSubjects.load(),
   },
+  teachers: {
+    title: 'Teachers',
+    subtitle: 'Manage teaching staff and their details',
+    render: () => Teachers.load(),
+  },
+  'teacher-attendance': {
+    title: 'Teacher Attendance',
+    subtitle: 'Mark and track daily teacher attendance',
+    render: () => TeacherAttendance.load(),
+  },
+  payroll: {
+    title: 'Teacher Payroll',
+    subtitle: 'Process monthly salary and payments',
+    render: () => Payroll.load(),
+  },
+  'student-attendance': {
+    title: 'Student Attendance',
+    subtitle: 'Track daily student attendance by class',
+    render: () => StudentAttendance.load(),
+  },
   settings: { title: 'Settings', subtitle: 'School profile, branding and printing', render: () => Settings.load() },
 };
 

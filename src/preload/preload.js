@@ -56,11 +56,43 @@ const api = {
     saveRemark: (payload) => invoke('grades:save-remark', payload),
   },
 
+  /* ------------------- teachers ------------------- */
+  teachers: {
+    list: (search = '') => invoke('teachers:list', { search }),
+    get: (id) => invoke('teachers:get', { id }),
+    create: (payload) => invoke('teachers:create', payload),
+    update: (payload) => invoke('teachers:update', payload),
+    remove: (id) => invoke('teachers:remove', { id }),
+  },
+
+  /* ---------------- teacher-attendance ---------------- */
+  teacherAttendance: {
+    list: (filters = {}) => invoke('teacher-attendance:list', filters),
+    upsert: (payload) => invoke('teacher-attendance:upsert', payload),
+    remove: (id) => invoke('teacher-attendance:remove', { id }),
+  },
+
+  /* ---------------- teacher-payroll ---------------- */
+  teacherPayroll: {
+    list: (filters = {}) => invoke('teacher-payroll:list', filters),
+    upsert: (payload) => invoke('teacher-payroll:upsert', payload),
+    remove: (id) => invoke('teacher-payroll:remove', { id }),
+  },
+
+  /* ---------------- student-attendance ---------------- */
+  studentAttendance: {
+    list: (filters = {}) => invoke('student-attendance:list', filters),
+    upsert: (payload) => invoke('student-attendance:upsert', payload),
+    bulkUpdate: (updates) => invoke('student-attendance:bulk-update', updates),
+    remove: (id) => invoke('student-attendance:remove', { id }),
+  },
+
   /* ---------------- settings ---------------- */
   settings: {
     getAll: () => invoke('settings:get-all'),
     save: (payload) => invoke('settings:save', payload),
     reset: () => invoke('settings:reset'),
+    setAttendanceWeight: (weight) => invoke('settings:attendance-weight', { attendanceWeight: weight }),
   },
 
   /* ---------------- dashboard ---------------- */

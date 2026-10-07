@@ -927,3 +927,37 @@ td.actions { text-align: right; white-space: nowrap; }
 .view { display: none; height: 100%; overflow: auto; padding: 22px 26px 40px; }
 .view.active { display: block; }
 
+/* ========================= TEACHER PAYROLL BADGES ========================= */
+.badge.Paid, .badge.ok, .badge.A { background: rgba(34, 197, 94, 0.18); color: #86efac; border: 1px solid rgba(34, 197, 94, 0.45); }
+.badge.Partial, .badge.warn, .badge.B { background: rgba(245, 158, 11, 0.18); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.45); }
+.badge.Unpaid, .badge.danger, .badge.Fail { background: rgba(239, 68, 68, 0.18); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.45); }
+.badge.C { background: rgba(56, 189, 248, 0.18); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.45); }
+.badge.D { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.45); }
+.badge.Aplus { background: linear-gradient(135deg, rgba(250, 204, 21, 0.25), rgba(34, 197, 94, 0.25)); color: #fde68a; }
+
+/* Attendance status badges */
+.badge.Present, .badge.present, .badge.attendance-present { background: rgba(34, 197, 94, 0.18); color: #86efac; border: 1px solid rgba(34, 197, 94, 0.45); }
+.badge.Absent, .badge.absent, .badge.attendance-absent { background: rgba(239, 68, 68, 0.18); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.45); }
+.badge.Late, .badge.late, .badge.attendance-late { background: rgba(245, 158, 11, 0.18); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.45); }
+.badge.Leave, .badge.leave, .badge.attendance-leave { background: rgba(56, 189, 248, 0.18); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.45); }
+.badge.not-marked { background: rgba(148, 163, 184, 0.12); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.35); }
+
+/* Student attendance P/A buttons */
+.att-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  background: rgba(255,255,255,0.04);
+  color: var(--muted);
+}
+.att-btn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+.att-btn.active { color: #fff; border-color: transparent; }
+.att-present.active { background: rgba(34, 197, 94, 0.7); }
+.att-present.active:hover { background: rgba(34, 197, 94, 0.85); }
+.att-absent.active { background: rgba(239, 68, 68, 0.7); }
+.att-absent.active:hover { background: rgba(239, 68, 68, 0.85); }
+

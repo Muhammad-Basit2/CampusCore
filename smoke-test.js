@@ -971,6 +971,10 @@ section('IPC channel registry', (ctx) => {
     'data:import-students-dialog',
     'data:import-marks',
     'data:import-marks-dialog',
+    'student-attendance:list',
+    'student-attendance:upsert',
+    'student-attendance:bulk-update',
+    'student-attendance:remove',
   ];
   for (const channel of expected) {
     check(`channel ${channel} registered`, ctx.registered.has(channel), 'missing');

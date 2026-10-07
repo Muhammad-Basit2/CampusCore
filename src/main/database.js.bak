@@ -174,63 +174,6 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
 );
-
- /* ======================= Teachers ======================= */
- CREATE TABLE IF NOT EXISTS teachers (
-   id            INTEGER PRIMARY KEY AUTOINCREMENT,
-   fullName      TEXT    NOT NULL,
-   employeeCode  TEXT    NOT NULL UNIQUE COLLATE NOCASE,
-   specialization TEXT   NOT NULL DEFAULT '',
-   phone         TEXT    NOT NULL DEFAULT '',
-   email         TEXT    NOT NULL DEFAULT '',
-   address       TEXT    NOT NULL DEFAULT '',
-   joiningDate   TEXT    NOT NULL DEFAULT '',
-   baseSalary    REAL    NOT NULL DEFAULT 0,
-   createdAt     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
- );
- CREATE INDEX IF NOT EXISTS idx_teachers_code ON teachers(employeeCode);
- CREATE INDEX IF NOT EXISTS idx_teachers_name ON teachers(fullName);
-
- /* =================== Teacher Attendance ================== */
- CREATE TABLE IF NOT EXISTS teacher_attendance (
-   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-   teacherId  INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-   date       TEXT    NOT NULL,
-   status     TEXT    NOT NULL DEFAULT 'Present' CHECK(status IN ('Present','Absent','Leave')),
-   UNIQUE (teacherId, date)
- );
- CREATE INDEX IF NOT EXISTS idx_ta_teacher ON teacher_attendance(teacherId);
- CREATE INDEX IF NOT EXISTS idx_ta_date   ON teacher_attendance(date);
-
- /* ===================== Teacher Payroll ==================== */
- CREATE TABLE IF NOT EXISTS teacher_payroll (
-   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-   teacherId   INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-   monthYear   TEXT    NOT NULL,
-   totalDays   INTEGER NOT NULL DEFAULT 0,
-   presentDays INTEGER NOT NULL DEFAULT 0,
-   deductions  REAL    NOT NULL DEFAULT 0,
-   bonus       REAL    NOT NULL DEFAULT 0,
-   netSalary   REAL    NOT NULL DEFAULT 0,
-   status      TEXT    NOT NULL DEFAULT 'Unpaid' CHECK(status IN ('Paid','Unpaid')),
-   paymentDate TEXT    NOT NULL DEFAULT '',
-   UNIQUE (teacherId, monthYear)
- );
- CREATE INDEX IF NOT EXISTS idx_tp_teacher ON teacher_payroll(teacherId);
- CREATE INDEX IF NOT EXISTS idx_tp_month   ON teacher_payroll(monthYear);
-
- /* =================== Student Attendance =================== */
- CREATE TABLE IF NOT EXISTS student_attendance (
-   id        INTEGER PRIMARY KEY AUTOINCREMENT,
-   studentId INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-   classId   INTEGER REFERENCES classes(id) ON DELETE CASCADE,
-   date      TEXT    NOT NULL,
-   status    TEXT    NOT NULL DEFAULT 'Present' CHECK(status IN ('Present','Absent','Late')),
-   UNIQUE(studentId, classId, date)
- );
- CREATE INDEX IF NOT EXISTS idx_sa_student ON student_attendance(studentId);
- CREATE INDEX IF NOT EXISTS idx_sa_class   ON student_attendance(classId);
- CREATE INDEX IF NOT EXISTS idx_sa_date    ON student_attendance(date);
 `;
 
 const SEED_SUBJECTS = [
@@ -335,7 +278,6 @@ async function initDatabase() {
   await exec(SCHEMA);
   await migrateRollNoUniqueness();
   await migrateClassSubjects();
-  await migrateStudentAttendanceUniqueness();
   await seedDefaults();
   // Rows that still carry no explicit assignment (the seeded defaults on a fresh
   // database, legacy rows on an existing one) are attached to every class, so
@@ -403,41 +345,6 @@ async function migrateRollNoUniqueness() {
   await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_students_roll_class ON students(rollNo COLLATE NOCASE, studentClass)');
   await run('CREATE INDEX IF NOT EXISTS idx_students_name ON students(name)');
   await run('CREATE INDEX IF NOT EXISTS idx_students_class ON students(studentClass)');
-}
-
-/**
- * Migration: add UNIQUE constraint on (studentId, date) for student_attendance.
- * Prevents duplicate attendance records for the same student on the same day.
- */
-async function migrateStudentAttendanceUniqueness() {
-  const indexes = await all(
-    "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='student_attendance'",
-  );
-  const hasUnique = indexes.some((idx) => idx.name === 'sqlite_autoindex_student_attendance_1' || idx.name === 'idx_sa_unique_student_date');
-  if (hasUnique) return; // already has unique constraint or fresh DB
-
-  // Clean up any existing duplicate records (keep the latest one)
-  try {
-    await run(`
-      DELETE FROM student_attendance
-      WHERE id NOT IN (
-        SELECT max_id FROM (
-          SELECT MAX(id) as max_id
-          FROM student_attendance
-          GROUP BY studentId, date
-        )
-      )
-    `);
-  } catch (err) {
-    console.log('[database] cleanup duplicates:', err.message);
-  }
-
-  // Add the unique index
-  try {
-    await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_sa_unique ON student_attendance(studentId, classId, date)');
-  } catch (err) {
-    console.log('[database] unique index:', err.message);
-  }
 }
 
 /**

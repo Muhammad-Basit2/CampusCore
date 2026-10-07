@@ -456,6 +456,10 @@ const Keys = {
           ['Ctrl + I', 'Fee &amp; Invoicing'],
           ['Ctrl + R', 'Grades &amp; Report Cards'],
           ['Ctrl + B', 'Classes &amp; Subjects'],
+          ['Ctrl + T', 'Teachers'],
+          ['Ctrl + Y', 'Teacher Attendance'],
+          ['Ctrl + P', 'Teacher Payroll'],
+          ['Ctrl + A', 'Student Attendance'],
           ['Ctrl + G', 'Settings'],
         ],
       },
@@ -491,6 +495,10 @@ const Keys = {
         fees: 'Fee &amp; Invoicing',
         grades: 'Grades &amp; Report Cards',
         classes: 'Classes &amp; Subjects',
+        teachers: 'Teachers',
+        'teacher-attendance': 'Teacher Attendance',
+        payroll: 'Teacher Payroll',
+        'student-attendance': 'Student Attendance',
         settings: 'Settings',
       }[context] || 'This view'
     );
