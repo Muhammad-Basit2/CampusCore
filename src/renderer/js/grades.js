@@ -452,21 +452,23 @@ const Grades = {
       `<th class="col-student">Student</th>` +
       `<th class="col-class">Class</th>` +
       this.subjects
+        .filter((s) => s && s.name !== undefined)
         .map(
           (s) =>
-            `<th><div class="subject-head"><span class="subj-name">${esc(s.name)}</span><span class="maxm">max ${esc(s.maxMarks)}</span></div></th>`,
+            `<th><div class="subject-head"><span class="subj-name">${esc(s.name)}</span><span class="maxm">max ${esc(s.maxMarks || 100)}</span></div></th>`,
         )
         .join('') +
-      `<th class="col-total"><div class="subject-head"><span class="subj-name">Total</span><span class="maxm">of ${num(this.subjects.reduce((a, s) => a + Number(s.maxMarks), 0), 0)}</span></div></th>` +
+      `<th class="col-total"><div class="subject-head"><span class="subj-name">Total</span><span class="maxm">of ${num(this.subjects.reduce((a, s) => a + Number(s.maxMarks || 0), 0), 0)}</span></div></th>` +
       `</tr></thead>`;
 
     const bodyRows = rows
       .map((st) => {
         const cells = this.subjects
+          .filter((s) => s && s.name !== undefined)
           .map((sub) => {
             const value = this.marks.get(st.id + '|' + sub.name);
-            return `<td><input type="number" min="0" max="${esc(sub.maxMarks)}" step="0.01"
-              data-student="${st.id}" data-subject="${esc(sub.name)}" data-max="${esc(sub.maxMarks)}"
+            return `<td><input type="number" min="0" max="${esc(sub.maxMarks || 100)}" step="0.01"
+              data-student="${st.id}" data-subject="${esc(sub.name)}" data-max="${esc(sub.maxMarks || 100)}"
               value="${value === undefined ? '' : esc(value)}" class="mark-input" /></td>`;
           })
           .join('');
@@ -879,6 +881,8 @@ const Grades = {
    * "Class 1 +9" counter the teacher has to open to interpret.
    */
   subjectRow(s, i) {
+    // Defensive: skip entries with missing data to prevent "Cannot read properties of undefined"
+    if (!s || typeof s.name === 'undefined') return '';
     // Subjects from class_subjects have id=null and source='classSubjects'
     const isClassSubject = s.source === 'classSubjects';
     const subjectId = isClassSubject ? s.classSubjectId : s.id;
@@ -889,7 +893,7 @@ const Grades = {
     return `<tr data-id="${subjectId}" data-source="${s.source || 'grades'}">
                             <td class="muted">${i + 1}</td>
                             <td><strong>${esc(s.name)}</strong></td>
-                            <td class="num">${esc(s.maxMarks)}</td>
+                            <td class="num">${esc(s.maxMarks || 100)}</td>
                             <td class="class-cell">${this.subjectCategoryPills(s)}</td>
                             <td class="actions no-print">${actions}</td>
                           </tr>`;

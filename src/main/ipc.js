@@ -365,9 +365,9 @@ async function subjectsForClass(className) {
     }
   }
 
-  const merged = [...byName.values()].sort(
-    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
-  );
+  const merged = [...byName.values()]
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+    .filter((s) => s && typeof s.name !== 'undefined');
   return merged;
 }
 
@@ -996,15 +996,17 @@ function registerIpcHandlers(ctx) {
     // Only the subjects configured for this student's class are listed, so the
     // card reflects that class's curriculum.
     const subjects = await subjectsForClass(student.studentClass);
-    const rows = subjects.map((s) => {
-      const found = marks.find((m) => m.subject === s.name);
-      return {
-        subject: s.name,
-        marksObtained: found ? found.marksObtained : 0,
-        maxMarks: found ? found.maxMarks : s.maxMarks,
-        hasMark: !!found,
-      };
-    });
+    const rows = (subjects || [])
+      .filter((s) => s && typeof s.name !== 'undefined')
+      .map((s) => {
+        const found = marks.find((m) => m.subject === s.name);
+        return {
+          subject: s.name,
+          marksObtained: found ? found.marksObtained : 0,
+          maxMarks: found ? found.maxMarks : (s.maxMarks || 100),
+          hasMark: !!found,
+        };
+      });
 
     const remarkRow = await db.get('SELECT remark FROM reportRemarks WHERE rollNo = ?', [roll]);
     const report = buildReport(student, rows, passMark, remarkRow ? remarkRow.remark : '');
@@ -1077,19 +1079,21 @@ function registerIpcHandlers(ctx) {
     }
 
     const results = students.map((s) => {
-      const rows = (byStudent.get(s.id) || []).map((sub) => {
-        // roll AND class must both match: a same-roll student in another class
-        // must never leak into this row.
-        const found = markIndex.get(
-          `${String(s.rollNo).toLowerCase()}|${String(s.studentClass).toLowerCase()}|${String(sub.name).toLowerCase()}`,
-        );
-        return {
-          subject: sub.name,
-          marksObtained: found ? found.marksObtained : 0,
-          maxMarks: found ? found.maxMarks : sub.maxMarks,
-          hasMark: !!found,
-        };
-      });
+      const rows = (byStudent.get(s.id) || [])
+        .filter((sub) => sub && typeof sub.name !== 'undefined')
+        .map((sub) => {
+          // roll AND class must both match: a same-roll student in another class
+          // must never leak into this row.
+          const found = markIndex.get(
+            `${String(s.rollNo).toLowerCase()}|${String(s.studentClass).toLowerCase()}|${String(sub.name).toLowerCase()}`,
+          );
+          return {
+            subject: sub.name,
+            marksObtained: found ? found.marksObtained : 0,
+            maxMarks: found ? found.maxMarks : (sub.maxMarks || 100),
+            hasMark: !!found,
+          };
+        });
       const remarkRow = remarks.find((r) => r.rollNo === s.rollNo);
       return { student: s, report: buildReport(s, rows, passMark, remarkRow ? remarkRow.remark : '') };
     });

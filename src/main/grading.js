@@ -91,12 +91,13 @@ function buildReport(student, rows, passMark = 50, remark = '', opts = {}) {
   const precomputedPct   = opts.attendancePct;
 
   const subjects = (rows || []).map((r) => {
-    const percent = subjectPercent(r.marksObtained, r.maxMarks);
+    const maxMarks = r.maxMarks || 100;
+    const percent = subjectPercent(r.marksObtained, maxMarks);
     const band = gradeFor(percent, passMark);
     return {
       subject: r.subject,
       marksObtained: round(r.marksObtained, 2),
-      maxMarks: round(r.maxMarks, 2),
+      maxMarks: round(maxMarks, 2),
       percentage: percent,
       grade: band.grade,
       isPass: band.isPass,
@@ -104,8 +105,8 @@ function buildReport(student, rows, passMark = 50, remark = '', opts = {}) {
     };
   });
 
-  const totalObtained = round(subjects.reduce((s, r) => s + r.marksObtained, 0), 2);
-  const totalMax = round(subjects.reduce((s, r) => s.maxMarks, 0), 2);
+  const totalObtained = round(subjects.reduce((a, r) => a + r.marksObtained, 0), 2);
+  const totalMax = round(subjects.reduce((a, r) => a + (r.maxMarks || 0), 0), 2);
   const rawPercentage = totalMax > 0 ? round((totalObtained / totalMax) * 100, 2) : 0;
 
   // Attendance-adjusted percentage
