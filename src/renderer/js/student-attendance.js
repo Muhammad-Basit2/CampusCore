@@ -1,5 +1,5 @@
 /**
- * Student Attendance view - mark attendance by class and date.
+ * Student Attendance view - mark attendance by class and date with calendar view.
  */
 'use strict';
 
@@ -9,6 +9,8 @@ const StudentAttendance = {
   studentId: '',
   dateFrom: '',
   dateTo: '',
+  currentDate: new Date().toISOString().split('T')[0],
+  selectedDate: new Date(),
   _eventRegistry: new WeakMap(),
 
   async load() {
@@ -32,37 +34,34 @@ const StudentAttendance = {
     this.currentDate = this.dateFrom || new Date().toISOString().split('T')[0];
     this.classView = !!this.classId;
 
-    // If a class is selected, show ALL students from that class for the date range
-    // with their attendance status (or empty if not marked yet)
+    // If a class is selected, show ALL students from that class for the current date
     if (this.classId) {
       const className = this.classes.find(c => c.id == this.classId)?.name;
       const classStudents = this.students.filter(s => s.studentClass === className);
-      const dateRange = this.dateFrom && this.dateTo ? [this.dateFrom, this.dateTo] : [this.currentDate];
 
       this.rows = [];
       for (const student of classStudents) {
-        for (const date of dateRange) {
-          // Look in the fresh attendance records
-          const existing = attendanceRecords.find(r => r.studentId === student.id && r.date === date);
-          if (existing) {
-            this.rows.push(existing);
-          } else {
-            // Create a placeholder row for students without attendance
-            this.rows.push({
-              id: null,
-              studentId: student.id,
-              classId: this.classId,
-              date: date,
-              status: null,
-              studentName: student.name,
-              rollNo: student.rollNo,
-              className: className || '',
-            });
-          }
+        // Look in the fresh attendance records for the current date
+        const existing = attendanceRecords.find(r => r.studentId === student.id && r.date === this.currentDate);
+        if (existing) {
+          this.rows.push(existing);
+        } else {
+          // Create a placeholder row for students without attendance
+          this.rows.push({
+            id: null,
+            studentId: student.id,
+            classId: this.classId,
+            date: this.currentDate,
+            status: null,
+            note: '',
+            studentName: student.name,
+            rollNo: student.rollNo,
+            className: className || '',
+          });
         }
       }
-      // Sort by student name then date
-      this.rows.sort((a, b) => (a.studentName || '').localeCompare(b.studentName || '') || a.date.localeCompare(b.date));
+      // Sort by student name
+      this.rows.sort((a, b) => (a.studentName || '').localeCompare(b.studentName || ''));
     } else {
       // No class filter - show all attendance records
       this.rows = attendanceRecords;
@@ -72,65 +71,59 @@ const StudentAttendance = {
 
     // Filter out placeholder rows (null id) for summary calculations
     const realRows = this.rows.filter(r => r.id !== null);
-    const placeholderCount = this.rows.length - realRows.length;
 
     view.innerHTML = `
-      <div class="grid cols-4">
-        <div class="stat accent-brand" data-kpi-total-container>
-          <div class="label">Total Records</div>
-          <div class="value" data-kpi-total>${realRows.length}</div>
-          <div class="foot">attendance entries</div>
-        </div>
-        <div class="stat accent-ok" data-kpi-present-container>
-          <div class="label">Present</div>
-          <div class="value" data-kpi-present>${realRows.filter(r => r.status === 'Present').length}</div>
-          <div class="foot">on record</div>
-        </div>
-        <div class="stat accent-danger" data-kpi-absent-container>
-          <div class="label">Absent</div>
-          <div class="value" data-kpi-absent>${realRows.filter(r => r.status === 'Absent').length}</div>
-          <div class="foot">on record</div>
-        </div>
-        <div class="stat accent-warn" data-kpi-late-container>
-          <div class="label">Late</div>
-          <div class="value" data-kpi-late>${realRows.filter(r => r.status === 'Late').length}</div>
-          <div class="foot">on record</div>
-        </div>
-      </div>
-
-      <div class="card mt">
-        <div class="card-head">
-          <h3>Student Attendance</h3>
-          <div class="search-row no-print">
-            <select id="sa_class">
-              <option value="">All Classes</option>
-              ${this.classes.map(c => `<option value="${c.id}"${this.classId == c.id ? ' selected' : ''}>${c.name}</option>`).join('')}
-            </select>
-            <select id="sa_student">
-              <option value="">All Students</option>
-            </select>
-            <input type="date" id="sa_dateFrom" value="${this.dateFrom}" />
-            <span class="muted">to</span>
-            <input type="date" id="sa_dateTo" value="${this.dateTo}" />
-            <button class="btn" id="sa_refresh">Refresh</button>
-            <button class="btn primary" id="sa_mark">Mark Attendance</button>
-            <button class="btn primary" id="sa_saveAll" style="display:none">Save All for ${this.currentDate}</button>
+      <div class="attendance-container">
+        <div class="attendance-main">
+          <div class="card">
+            <div class="card-head">
+              <h3>Student Attendance <span class="muted small">(${this.currentDate})</span></h3>
+              <div class="search-row no-print">
+                <select id="sa_class">
+                  <option value="">Select Class</option>
+                  ${this.classes.map(c => `<option value="${c.id}"${this.classId == c.id ? ' selected' : ''}>${c.name}</option>`).join('')}
+                </select>
+                <button class="btn primary" id="sa_saveAll">Save All</button>
+              </div>
+            </div>
+            <div class="card-body tight">
+              ${this.classId && this.rows.length > 0 ? `
+                <div class="attendance-table-wrap">
+                  <table class="attendance-table">
+                    <thead>
+                      <tr>
+                        <th style="width: 100px">Student ID</th>
+                        <th>Name</th>
+                        <th style="width: 120px">Present</th>
+                        <th style="width: 120px">Absent</th>
+                        <th style="width: 120px">Leave</th>
+                        <th style="width: 100px">Note</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${this.rows.map((r) => this.row(r)).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              ` : `<div class="empty"><div class="big">📅</div>Please select a class to mark attendance</div>`}
+            </div>
           </div>
         </div>
-        <div class="card-body tight">
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th><th>Student</th><th>Class</th><th>Status</th><th class="actions">Actions</th>
-                </tr>
-              </thead>
-              <tbody>${
-                this.rows.length
-                  ? this.rows.map((r) => this.row(r)).join('')
-                  : emptyRow(5, 'No attendance records found.', '📅')
-              }</tbody>
-            </table>
+        <div class="attendance-sidebar">
+          ${this.renderCalendar()}
+          <div class="attendance-stats">
+            <div class="stat-item stat-present">
+              <div class="stat-label">Present</div>
+              <div class="stat-value">${realRows.filter(r => r.status === 'Present').length}</div>
+            </div>
+            <div class="stat-item stat-absent">
+              <div class="stat-label">Absent</div>
+              <div class="stat-value">${realRows.filter(r => r.status === 'Absent').length}</div>
+            </div>
+            <div class="stat-item stat-leave">
+              <div class="stat-label">Leave</div>
+              <div class="stat-value">${realRows.filter(r => r.status === 'Leave').length}</div>
+            </div>
           </div>
         </div>
       </div>`;
@@ -138,53 +131,122 @@ const StudentAttendance = {
     const classSelect = $('#sa_class');
     if (classSelect && this.classId) classSelect.value = this.classId;
 
-    await this.populateStudents();
     this.bind(view);
     this.bindKeys();
   },
 
   bindKeys() {
     Keys.register('student-attendance', {
-      n: { keys: 'N', label: 'Mark attendance', run: () => $('#sa_mark').click() },
+      s: { keys: 'S', label: 'Save all', run: () => $('#sa_saveAll')?.click() },
     });
   },
 
-  getAttendance(studentId, date) {
-    return this.rows.find((r) => r.studentId === studentId && r.date === date);
-  },
-  statusLabel(status) {
-    if (!status || status === 'null' || status === 'Null' || status === 'NULL') {
-      return 'Not Marked';
+  renderCalendar() {
+    const now = this.selectedDate;
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const monthName = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startDay = firstDay.getDay(); // 0 = Sunday
+    const daysInMonth = lastDay.getDate();
+    
+    const today = new Date();
+    const currentDateStr = this.currentDate;
+    
+    let calendarHTML = `
+      <div class="calendar-widget">
+        <div class="calendar-header">
+          <button class="calendar-nav" data-nav="prev">‹</button>
+          <div class="calendar-month">${monthName}</div>
+          <button class="calendar-nav" data-nav="next">›</button>
+        </div>
+        <div class="calendar-grid">
+          <div class="calendar-day-name">Sun</div>
+          <div class="calendar-day-name">Mon</div>
+          <div class="calendar-day-name">Tue</div>
+          <div class="calendar-day-name">Wed</div>
+          <div class="calendar-day-name">Thu</div>
+          <div class="calendar-day-name">Fri</div>
+          <div class="calendar-day-name">Sat</div>`;
+    
+    // Empty cells before the first day
+    for (let i = 0; i < startDay; i++) {
+      calendarHTML += '<div class="calendar-day calendar-day-empty"></div>';
     }
-    const labels = { Present: 'Present', Absent: 'Absent', Late: 'Late' };
-    return labels[status] || status;
+    
+    // Days of the month
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(year, month, day);
+      // Format date in local timezone to avoid UTC offset issues
+      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const isToday = dateStr === todayStr;
+      const isSelected = dateStr === currentDateStr;
+      
+      let classes = 'calendar-day';
+      if (isToday) classes += ' calendar-day-today';
+      if (isSelected) classes += ' calendar-day-selected';
+      
+      calendarHTML += `<div class="${classes}" data-date="${dateStr}">${day}</div>`;
+    }
+    
+    calendarHTML += `
+        </div>
+      </div>`;
+    
+    return calendarHTML;
   },
-  async toggleAttendance(studentId, date, status) {
+
+  row(r) {
+    const student = this.students.find((s) => s.id === r.studentId) || {};
+    const studentName = r.studentName || student.name || 'Unknown';
+    const rollNo = r.rollNo || student.rollNo || '—';
+    const status = r.status;
+    
+    return `
+      <tr data-student-id="${r.studentId}">
+        <td class="mono">${esc(rollNo)}</td>
+        <td><strong>${esc(studentName)}</strong></td>
+        <td>
+          <label class="radio-btn ${status === 'Present' ? 'active' : ''}">
+            <input type="radio" name="status_${r.studentId}" value="Present" ${status === 'Present' ? 'checked' : ''}>
+            <span class="radio-custom"></span>
+          </label>
+        </td>
+        <td>
+          <label class="radio-btn ${status === 'Absent' ? 'active' : ''}">
+            <input type="radio" name="status_${r.studentId}" value="Absent" ${status === 'Absent' ? 'checked' : ''}>
+            <span class="radio-custom"></span>
+          </label>
+        </td>
+        <td>
+          <label class="radio-btn ${status === 'Leave' ? 'active' : ''}">
+            <input type="radio" name="status_${r.studentId}" value="Leave" ${status === 'Leave' ? 'checked' : ''}>
+            <span class="radio-custom"></span>
+          </label>
+        </td>
+        <td>
+          <button class="btn-note" data-student-id="${r.studentId}" title="${r.note || 'Add note'}">Note</button>
+        </td>
+      </tr>`;
+  },
+
+  async toggleAttendance(studentId, status) {
     try {
-      // Single lookup: capture classId and student details before mutation
-      const existingRow = this.rows.find((r) => r.studentId === studentId && r.date === date);
-      const classId = existingRow?.classId || undefined;
+      const existingRow = this.rows.find((r) => r.studentId === studentId);
+      const classId = existingRow?.classId || this.classId;
+      const date = this.currentDate;
+      
       await window.api.studentAttendance.upsert({ studentId, classId, date, status });
 
-      const studentName = existingRow?.studentName || this.students.find((s) => s.id === studentId)?.name || 'Student';
-      const className = existingRow?.className || this.students.find((s) => s.id === studentId)?.studentClass || '';
-      const rollNo = existingRow?.rollNo || this.students.find((s) => s.id === studentId)?.rollNo || '';
-      notify.ok('Updated', `${studentName}${rollNo ? ` (${rollNo})` : ''} — ${className} — ${date}: ${status}`);
-
-      // Immutable local state mutation: update ONLY the matching row
+      // Update local state
       this.rows = this.rows.map((item) =>
-        item.studentId === studentId && item.date === date ? { ...item, status } : item,
+        item.studentId === studentId ? { ...item, status, id: item.id || -1 } : item
       );
 
-      // Re-render the specific row in the DOM using the composite data-key
-      const key = `${studentId}-${date}`;
-      const rowEl = document.querySelector(`tr[data-key="${key}"]`);
-      const newRowData = this.rows.find((r) => r.studentId === studentId && r.date === date);
-      if (rowEl && newRowData) {
-        rowEl.outerHTML = this.row(newRowData);
-      }
-
-      // Update summary counts based on the deduplicated, immutably-updated array
+      // Update summary
       this.updateSummary();
     } catch (err) {
       notify.error('Failed', err.message);
@@ -192,94 +254,132 @@ const StudentAttendance = {
   },
   
   updateSummary() {
-    // Only count real rows (not placeholders)
-    const realRows = this.rows.filter((r) => r.id !== null);
-    const total = realRows.length;
-    const present = realRows.filter((r) => r.status === 'Present').length;
-    const absent = realRows.filter((r) => r.status === 'Absent').length;
-    const late = realRows.filter((r) => r.status === 'Late').length;
+    const realRows = this.rows.filter((r) => r.id !== null && r.id !== -1);
+    const present = this.rows.filter((r) => r.status === 'Present').length;
+    const absent = this.rows.filter((r) => r.status === 'Absent').length;
+    const leave = this.rows.filter((r) => r.status === 'Leave').length;
 
-    const totalEl = document.querySelector('[data-kpi-total]');
-    const presentEl = document.querySelector('[data-kpi-present]');
-    const absentEl = document.querySelector('[data-kpi-absent]');
-    const lateEl = document.querySelector('[data-kpi-late]');
+    const presentEl = document.querySelector('.stat-present .stat-value');
+    const absentEl = document.querySelector('.stat-absent .stat-value');
+    const leaveEl = document.querySelector('.stat-leave .stat-value');
     
-    if (totalEl) totalEl.textContent = total;
     if (presentEl) presentEl.textContent = present;
     if (absentEl) absentEl.textContent = absent;
-    if (lateEl) lateEl.textContent = late;
+    if (leaveEl) leaveEl.textContent = leave;
   },
   bind(view) {
     const reg = this._eventRegistry;
-    delegateOnce(reg, view, 'change', '#sa_class', (e) => {
-      this.classId = e.target.value;
+    
+    // Class selection
+    delegateOnce(reg, view, 'change', '#sa_class', async (e, sel) => {
+      this.classId = sel.value;
+      await this.load();
+    });
+    
+    // Calendar navigation
+    delegateOnce(reg, view, 'click', '.calendar-nav', (e, btn) => {
+      const direction = btn.dataset.nav;
+      const current = this.selectedDate;
+      if (direction === 'prev') {
+        this.selectedDate = new Date(current.getFullYear(), current.getMonth() - 1, 1);
+      } else {
+        this.selectedDate = new Date(current.getFullYear(), current.getMonth() + 1, 1);
+      }
       this.load();
     });
-    delegateOnce(reg, view, 'change', '#sa_dateFrom', (e) => {
-      this.dateFrom = e.target.value;
-      this.load();
+    
+    // Calendar day selection
+    delegateOnce(reg, view, 'click', '.calendar-day:not(.calendar-day-empty)', (e, day) => {
+      const selectedDate = day.dataset.date;
+      if (selectedDate) {
+        this.currentDate = selectedDate;
+        this.dateFrom = selectedDate;
+        this.dateTo = '';
+        this.load();
+      }
     });
-    delegateOnce(reg, view, 'change', '#sa_dateTo', (e) => {
-      this.dateTo = e.target.value;
-      this.load();
+    
+    // Radio button changes
+    delegateOnce(reg, view, 'change', '.radio-btn input', async (e, input) => {
+      const row = input.closest('tr');
+      const studentId = Number(row.dataset.studentId);
+      const status = input.value;
+      
+      // Update radio button styles
+      const allRadios = row.querySelectorAll('.radio-btn');
+      allRadios.forEach(rb => rb.classList.remove('active'));
+      input.closest('.radio-btn').classList.add('active');
+      
+      await this.toggleAttendance(studentId, status);
     });
-    delegateOnce(reg, view, 'click', '#sa_refresh', () => this.load());
-    delegateOnce(reg, view, 'click', '#sa_mark', () => this.openMarkModal());
-    delegateOnce(reg, view, 'click', '#sa_saveAll', async (e) => {
-      const btn = e.currentTarget;
+    
+    // Note button
+    delegateOnce(reg, view, 'click', '.btn-note', async (e, btn) => {
+      const studentId = Number(btn.dataset.studentId);
+      const row = this.rows.find(r => r.studentId === studentId);
+      const currentNote = row?.note || '';
+      
+      const note = prompt('Enter note for student:', currentNote);
+      if (note !== null) {
+        try {
+          await window.api.studentAttendance.upsert({
+            studentId,
+            classId: this.classId,
+            date: this.currentDate,
+            status: row?.status || null,
+            note: note
+          });
+          
+          // Update local state
+          this.rows = this.rows.map((item) =>
+            item.studentId === studentId ? { ...item, note } : item
+          );
+          
+          btn.title = note || 'Add note';
+          notify.ok('Note saved', 'Student note updated');
+        } catch (err) {
+          notify.error('Failed', err.message);
+        }
+      }
+    });
+    
+    // Save all button
+    delegateOnce(reg, view, 'click', '#sa_saveAll', async (e, btn) => {
       if (btn.disabled) return;
       await this.saveAllForDate();
-    });
-    delegateOnce(reg, view, 'click', '.att-btn', async (e, btn) => {
-      const studentId = Number(btn.dataset.student);
-      const date = btn.dataset.date;
-      const newStatus = btn.dataset.status;
-      const row = btn.closest('tr');
-      if (!row) return;
-      await this.toggleAttendance(studentId, date, newStatus);
-    });
-    delegateOnce(reg, view, 'click', '.btn-ghost[data-del]', async (e, btn) => {
-      const id = Number(btn.dataset.del);
-      if (!id) return;
-      // Grab student details from the row before deletion for the toast
-      const rowEl = btn.closest('tr');
-      const delStudentName = rowEl?.dataset.studentId ? (this.rows.find((r) => r.studentId === Number(rowEl.dataset.studentId) && r.date === rowEl.dataset.date)?.studentName) || 'Student' : 'Student';
-      const delDate = rowEl?.dataset.date || '';
-      const ok = await confirmDialog({ title: 'Delete attendance', message: 'Delete this attendance record?', confirmText: 'Delete', danger: true });
-      if (!ok) return;
-      try {
-        await window.api.studentAttendance.remove({ id });
-        notify.ok('Attendance deleted', `${delStudentName} — ${delDate} — attendance record removed`);
-        await this.load();
-      } catch (err) {
-        notify.error('Failed', err.message);
-      }
     });
   },
 
   row(r) {
     const student = this.students.find((s) => s.id === r.studentId) || {};
     const studentName = r.studentName || student.name || 'Unknown';
-    const className = r.className || student.studentClass || '—';
-    const dateVal = r.date || this.currentDate;
-    const isPlaceholder = r.id === null;
-    // Use the row's own status - no need to re-lookup
-    const rawStatus = r.status;
-    const status = !rawStatus || rawStatus === 'null' || rawStatus === 'Null' ? 'not-marked' : rawStatus.toLowerCase().replace(/\s+/g, '-');
-    const key = `${r.studentId}-${dateVal}`;
-
+    const rollNo = r.rollNo || student.rollNo || '—';
+    const status = r.status;
+    
     return `
-      <tr data-key="${key}" data-student-id="${r.studentId}" data-date="${dateVal}">
-        <td>${dateVal}</td>
-        <td><strong>${esc(studentName)}</strong>${student.rollNo ? `<br><span class="muted" style="font-size:12px">${esc(student.rollNo)}</span>` : ''}</td>
-        <td>${esc(className)}</td>
+      <tr data-student-id="${r.studentId}">
+        <td class="mono">${esc(rollNo)}</td>
+        <td><strong>${esc(studentName)}</strong></td>
         <td>
-          <span class="badge ${status}" data-status-badge>${this.statusLabel(rawStatus)}</span>
+          <label class="radio-btn ${status === 'Present' ? 'active' : ''}">
+            <input type="radio" name="status_${r.studentId}" value="Present" ${status === 'Present' ? 'checked' : ''}>
+            <span class="radio-custom"></span>
+          </label>
         </td>
-        <td class="actions">
-          <button class="btn-sm att-btn att-present${status === 'present' ? ' active' : ''}" data-student="${r.studentId}" data-date="${dateVal}" data-status="Present" title="Mark Present">✓ P</button>
-          <button class="btn-sm att-btn att-absent${status === 'absent' ? ' active' : ''}" data-student="${r.studentId}" data-date="${dateVal}" data-status="Absent" title="Mark Absent">✗ A</button>
-          ${!isPlaceholder ? `<button class="btn-sm btn-ghost" data-del="${r.id}" title="Delete">🗑</button>` : ''}
+        <td>
+          <label class="radio-btn ${status === 'Absent' ? 'active' : ''}">
+            <input type="radio" name="status_${r.studentId}" value="Absent" ${status === 'Absent' ? 'checked' : ''}>
+            <span class="radio-custom"></span>
+          </label>
+        </td>
+        <td>
+          <label class="radio-btn ${status === 'Leave' ? 'active' : ''}">
+            <input type="radio" name="status_${r.studentId}" value="Leave" ${status === 'Leave' ? 'checked' : ''}>
+            <span class="radio-custom"></span>
+          </label>
+        </td>
+        <td>
+          <button class="btn-note" data-student-id="${r.studentId}" title="${r.note || 'Add note'}">Note</button>
         </td>
       </tr>`;
   },

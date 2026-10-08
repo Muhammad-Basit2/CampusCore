@@ -69,6 +69,7 @@ const api = {
   teacherAttendance: {
     list: (filters = {}) => invoke('teacher-attendance:list', filters),
     upsert: (payload) => invoke('teacher-attendance:upsert', payload),
+    bulkUpdate: (updates) => invoke('teacher-attendance:bulk-update', updates),
     remove: (id) => invoke('teacher-attendance:remove', { id }),
   },
 

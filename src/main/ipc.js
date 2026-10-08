@@ -1495,7 +1495,7 @@ function registerIpcHandlers(ctx) {
 
   handle('teacher-attendance:list', async ({ teacherId, dateFrom = '', dateTo = '' } = {}) => {
     const tid = teacherId ? id(teacherId, 'Teacher id') : null;
-    let sql = 'SELECT ta.*, t.fullName, t.employeeCode FROM teacher_attendance ta JOIN teachers t ON t.id = ta.teacherId WHERE 1=1';
+    let sql = 'SELECT ta.*, t.fullName AS teacherName, t.employeeCode FROM teacher_attendance ta JOIN teachers t ON t.id = ta.teacherId WHERE 1=1';
     const params = [];
     if (tid) { sql += ' AND ta.teacherId = ?'; params.push(tid); }
     if (dateFrom) { sql += ' AND ta.date >= ?'; params.push(dateFrom); }
@@ -1509,11 +1509,16 @@ function registerIpcHandlers(ctx) {
     const date = str(payload.date, 'Date', { required: true, max: 20 });
     const status = oneOf(payload.status, ['Present', 'Absent', 'Late', 'Leave'], 'Present');
     await db.get('SELECT id FROM teachers WHERE id = ?', [teacherId]);
-    await db.run(
-      `INSERT INTO teacher_attendance (teacherId, date, status) VALUES (?, ?, ?)
-       ON CONFLICT(teacherId, date) DO UPDATE SET status = excluded.status`,
-      [teacherId, date, status],
-    );
+    // Check if a record already exists for this teacher+date
+    const existing = await db.get('SELECT id FROM teacher_attendance WHERE teacherId = ? AND date = ?', [teacherId, date]);
+    if (existing) {
+      await db.run('UPDATE teacher_attendance SET status = ? WHERE id = ?', [status, existing.id]);
+    } else {
+      await db.run(
+        'INSERT INTO teacher_attendance (teacherId, classId, date, status) VALUES (?, NULL, ?, ?)',
+        [teacherId, date, status],
+      );
+    }
     notify(ctx, 'teacher-attendance');
     return { teacherId, date, status };
   });
@@ -1527,7 +1532,7 @@ function registerIpcHandlers(ctx) {
     return { deleted: true };
   });
 
-  /* =================== Teacher Payroll ================= */
+  /* =================== Teacher Payroll =================== */
 
   handle('teacher-payroll:list', async ({ teacherId, monthYear = '' } = {}) => {
     let sql = 'SELECT tp.*, t.fullName, t.employeeCode FROM teacher_payroll tp JOIN teachers t ON t.id = tp.teacherId WHERE 1=1';
@@ -1575,8 +1580,31 @@ function registerIpcHandlers(ctx) {
     return { deleted: true };
   });
 
-  /* =================== Student Attendance ================= */
+  handle('teacher-attendance:bulk-update', async ({ date, updates } = {}) => {
+    const d = str(date, 'Date', { required: true, max: 20 });
+    if (!Array.isArray(updates) || !updates.length) throw new ValidationError('Updates required');
+    const rows = await Promise.all(
+      updates.map(async (item) => {
+        const teacherId = id(item.teacherId, 'Teacher id');
+        const status = oneOf(item.status, ['Present', 'Absent', 'Late', 'Leave'], 'Present');
+        await db.get('SELECT id FROM teachers WHERE id = ?', [teacherId]);
+        const existing = await db.get('SELECT id FROM teacher_attendance WHERE teacherId = ? AND date = ?', [teacherId, d]);
+        if (existing) {
+          await db.run('UPDATE teacher_attendance SET status = ? WHERE id = ?', [status, existing.id]);
+        } else {
+          await db.run(
+            'INSERT INTO teacher_attendance (teacherId, classId, date, status) VALUES (?, NULL, ?, ?)',
+            [teacherId, d, status],
+          );
+        }
+        return { teacherId, date: d, status };
+      }),
+    );
+    notify(ctx, 'teacher-attendance');
+    return { saved: rows.length };
+  });
 
+  /* =================== Student Attendance =================== */
   handle('student-attendance:list', async ({ studentId, classId, dateFrom = '', dateTo = '' } = {}) => {
     const sid = studentId ? id(studentId, 'Student id') : null;
     const cid = classId   ? id(classId, 'Class id')   : null;
@@ -1609,7 +1637,7 @@ function registerIpcHandlers(ctx) {
     const studentId = id(payload.studentId, 'Student id');
     const classId   = payload.classId ? id(payload.classId, 'Class id') : null;
     const date      = str(payload.date, 'Date', { required: true, max: 20 });
-    const status    = oneOf(payload.status, ['Present', 'Absent', 'Late'], 'Present');
+    const status    = oneOf(payload.status, ['Present', 'Absent', 'Late', 'Leave'], 'Present');
     await db.get('SELECT id FROM students WHERE id = ?', [studentId]);
     if (classId) await db.get('SELECT id FROM classes WHERE id = ?', [classId]);
 
@@ -1642,7 +1670,7 @@ function registerIpcHandlers(ctx) {
       updates.map(async (item) => {
         const studentId = id(item.studentId, 'Student id');
         const classId = item.classId ? id(item.classId, 'Class id') : null;
-        const status = oneOf(item.status, ['Present', 'Absent', 'Late'], 'Present');
+        const status = oneOf(item.status, ['Present', 'Absent', 'Late', 'Leave'], 'Present');
         await db.get('SELECT id FROM students WHERE id = ?', [studentId]);
         if (classId) await db.get('SELECT id FROM classes WHERE id = ?', [classId]);
 

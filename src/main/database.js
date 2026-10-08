@@ -195,12 +195,14 @@ CREATE TABLE IF NOT EXISTS settings (
  CREATE TABLE IF NOT EXISTS teacher_attendance (
    id         INTEGER PRIMARY KEY AUTOINCREMENT,
    teacherId  INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+   classId    INTEGER REFERENCES classes(id) ON DELETE CASCADE,
    date       TEXT    NOT NULL,
-   status     TEXT    NOT NULL DEFAULT 'Present' CHECK(status IN ('Present','Absent','Leave')),
-   UNIQUE (teacherId, date)
+   status     TEXT    NOT NULL DEFAULT 'Present' CHECK(status IN ('Present','Absent','Late','Leave')),
+   UNIQUE (teacherId, classId, date)
  );
  CREATE INDEX IF NOT EXISTS idx_ta_teacher ON teacher_attendance(teacherId);
- CREATE INDEX IF NOT EXISTS idx_ta_date   ON teacher_attendance(date);
+ CREATE INDEX IF NOT EXISTS idx_ta_class  ON teacher_attendance(classId);
+CREATE INDEX IF NOT EXISTS idx_ta_date   ON teacher_attendance(date);
 
  /* ===================== Teacher Payroll ==================== */
  CREATE TABLE IF NOT EXISTS teacher_payroll (
@@ -225,7 +227,7 @@ CREATE TABLE IF NOT EXISTS settings (
    studentId INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
    classId   INTEGER REFERENCES classes(id) ON DELETE CASCADE,
    date      TEXT    NOT NULL,
-   status    TEXT    NOT NULL DEFAULT 'Present' CHECK(status IN ('Present','Absent','Late')),
+   status    TEXT    NOT NULL DEFAULT 'Present' CHECK(status IN ('Present','Absent','Late','Leave')),
    UNIQUE(studentId, classId, date)
  );
  CREATE INDEX IF NOT EXISTS idx_sa_student ON student_attendance(studentId);
@@ -336,6 +338,10 @@ async function initDatabase() {
   await migrateRollNoUniqueness();
   await migrateClassSubjects();
   await migrateStudentAttendanceUniqueness();
+  await migrateTeacherAttendanceClassId();
+  await migrateTeacherAttendanceRemoveClassId();
+  await migrateTeacherAttendanceClassId();
+  await migrateAttendanceLeaveStatus();
   await seedDefaults();
   // Rows that still carry no explicit assignment (the seeded defaults on a fresh
   // database, legacy rows on an existing one) are attached to every class, so
@@ -437,6 +443,114 @@ async function migrateStudentAttendanceUniqueness() {
     await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_sa_unique ON student_attendance(studentId, classId, date)');
   } catch (err) {
     console.log('[database] unique index:', err.message);
+  }
+}
+
+/**
+ * Migration: add classId column to teacher_attendance for per-class attendance tracking.
+ */
+async function migrateTeacherAttendanceClassId() {
+  const cols = await all('PRAGMA table_info(teacher_attendance)');
+  if (!cols.length) return; // table doesn't exist yet (fresh DB)
+  if (cols.some((c) => c.name === 'classId')) return; // already migrated
+
+  await run('ALTER TABLE teacher_attendance ADD COLUMN classId INTEGER REFERENCES classes(id) ON DELETE CASCADE');
+}
+
+/**
+ * Migration: remove classId from teacher_attendance UNIQUE constraint.
+ *
+ * Teachers now mark attendance once per day (not per class). Existing per-class
+ * rows are consolidated into a single row per (teacherId, date), preserving the
+ * most recently updated record.
+ */
+async function migrateTeacherAttendanceRemoveClassId() {
+  const idx = await all(
+    "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='teacher_attendance' AND sql LIKE '%teacherId%classId%'",
+  );
+  if (!idx.length) return; // already migrated or fresh DB
+
+  // Recreate the table with the new constraint
+  await run(`
+    CREATE TABLE teacher_attendance_new (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      teacherId  INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+      classId    INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+      date       TEXT    NOT NULL,
+      status     TEXT    NOT NULL DEFAULT 'Present' CHECK(status IN ('Present','Absent','Late','Leave')),
+      UNIQUE (teacherId, date)
+    )
+  `);
+
+  // Consolidate: keep the row with the latest id for each (teacherId, date)
+  await run(`
+    INSERT INTO teacher_attendance_new (teacherId, classId, date, status)
+    SELECT teacherId, NULL, date, status
+    FROM teacher_attendance ta1
+    WHERE id = (
+      SELECT MAX(id) FROM teacher_attendance ta2
+      WHERE ta2.teacherId = ta1.teacherId AND ta2.date = ta1.date
+    )
+  `);
+
+  await run('DROP TABLE teacher_attendance');
+  await run('ALTER TABLE teacher_attendance_new RENAME TO teacher_attendance');
+  await run('CREATE INDEX IF NOT EXISTS idx_ta_teacher ON teacher_attendance(teacherId)');
+  await run('CREATE INDEX IF NOT EXISTS idx_ta_date ON teacher_attendance(date)');
+}
+
+/**
+ * Migration: add 'Leave' status option to attendance tables.
+ * 
+ * Updates the CHECK constraint on both teacher_attendance and student_attendance
+ * to include 'Leave' as a valid status option alongside 'Present', 'Absent', and 'Late'.
+ */
+async function migrateAttendanceLeaveStatus() {
+  // Check if teacher_attendance needs migration
+  const teacherTableInfo = await all("SELECT sql FROM sqlite_master WHERE type='table' AND name='teacher_attendance'");
+  if (teacherTableInfo.length && teacherTableInfo[0].sql && !teacherTableInfo[0].sql.includes("'Leave'")) {
+    await run(`
+      CREATE TABLE teacher_attendance_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        teacherId  INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+        classId    INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+        date       TEXT    NOT NULL,
+        status     TEXT    NOT NULL DEFAULT 'Present' CHECK(status IN ('Present','Absent','Late','Leave')),
+        UNIQUE (teacherId, date)
+      )
+    `);
+    await run(`
+      INSERT INTO teacher_attendance_new (id, teacherId, classId, date, status)
+      SELECT id, teacherId, classId, date, status FROM teacher_attendance
+    `);
+    await run('DROP TABLE teacher_attendance');
+    await run('ALTER TABLE teacher_attendance_new RENAME TO teacher_attendance');
+    await run('CREATE INDEX IF NOT EXISTS idx_ta_teacher ON teacher_attendance(teacherId)');
+    await run('CREATE INDEX IF NOT EXISTS idx_ta_date ON teacher_attendance(date)');
+  }
+
+  // Check if student_attendance needs migration
+  const studentTableInfo = await all("SELECT sql FROM sqlite_master WHERE type='table' AND name='student_attendance'");
+  if (studentTableInfo.length && studentTableInfo[0].sql && !studentTableInfo[0].sql.includes("'Leave'")) {
+    await run(`
+      CREATE TABLE student_attendance_new (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        studentId INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        classId   INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+        date      TEXT    NOT NULL,
+        status    TEXT    NOT NULL DEFAULT 'Present' CHECK(status IN ('Present','Absent','Late','Leave')),
+        UNIQUE(studentId, classId, date)
+      )
+    `);
+    await run(`
+      INSERT INTO student_attendance_new (id, studentId, classId, date, status)
+      SELECT id, studentId, classId, date, status FROM student_attendance
+    `);
+    await run('DROP TABLE student_attendance');
+    await run('ALTER TABLE student_attendance_new RENAME TO student_attendance');
+    await run('CREATE INDEX IF NOT EXISTS idx_sa_student ON student_attendance(studentId)');
+    await run('CREATE INDEX IF NOT EXISTS idx_sa_class ON student_attendance(classId)');
+    await run('CREATE INDEX IF NOT EXISTS idx_sa_date ON student_attendance(date)');
   }
 }
 

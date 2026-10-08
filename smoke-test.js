@@ -975,6 +975,18 @@ section('IPC channel registry', (ctx) => {
     'student-attendance:upsert',
     'student-attendance:bulk-update',
     'student-attendance:remove',
+    'teachers:list',
+    'teachers:get',
+    'teachers:create',
+    'teachers:update',
+    'teachers:remove',
+    'teacher-attendance:list',
+    'teacher-attendance:upsert',
+    'teacher-attendance:bulk-update',
+    'teacher-attendance:remove',
+    'teacher-payroll:list',
+    'teacher-payroll:upsert',
+    'teacher-payroll:remove',
   ];
   for (const channel of expected) {
     check(`channel ${channel} registered`, ctx.registered.has(channel), 'missing');
