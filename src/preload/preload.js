@@ -76,8 +76,11 @@ const api = {
   /* ---------------- teacher-payroll ---------------- */
   teacherPayroll: {
     list: (filters = {}) => invoke('teacher-payroll:list', filters),
+    dueSalaries: (filters = {}) => invoke('teacher-payroll:due-salaries', filters),
     upsert: (payload) => invoke('teacher-payroll:upsert', payload),
+    markPaid: (payload) => invoke('teacher-payroll:mark-paid', payload),
     remove: (id) => invoke('teacher-payroll:remove', { id }),
+    get: (id) => invoke('teacher-payroll:get', { id }),
   },
 
   /* ---------------- student-attendance ---------------- */

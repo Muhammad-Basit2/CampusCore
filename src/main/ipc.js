@@ -1543,32 +1543,103 @@ function registerIpcHandlers(ctx) {
     return db.all(sql, params);
   });
 
+  handle('teacher-payroll:due-salaries', async ({ monthYear = '' } = {}) => {
+    const currentMonth = monthYear || new Date().toISOString().slice(0, 7);
+    
+    // Get all teachers
+    const teachers = await db.all('SELECT id, fullName, employeeCode, baseSalary FROM teachers ORDER BY fullName');
+    
+    const dueSalaries = await Promise.all(
+      teachers.map(async (teacher) => {
+        // Check if payroll already exists for this month
+        const existing = await db.get(
+          'SELECT * FROM teacher_payroll WHERE teacherId = ? AND monthYear = ?',
+          [teacher.id, currentMonth]
+        );
+        
+        if (existing) {
+          return { ...existing, ...teacher };
+        }
+        
+        // Calculate from attendance
+        const attendance = await db.all(
+          'SELECT status FROM teacher_attendance WHERE teacherId = ? AND date LIKE ?',
+          [teacher.id, currentMonth + '%']
+        );
+        
+        const presentDays = attendance.filter(a => a.status === 'Present').length;
+        const totalDays = attendance.length || 30;
+        const netSalary = Math.round((teacher.baseSalary * presentDays / (totalDays || 1)) * 100) / 100;
+        
+        return {
+          id: null,
+          teacherId: teacher.id,
+          fullName: teacher.fullName,
+          employeeCode: teacher.employeeCode,
+          monthYear: currentMonth,
+          totalDays,
+          presentDays,
+          deductions: 0,
+          bonus: 0,
+          netSalary,
+          status: 'Unpaid',
+          paymentDate: '',
+          isNew: !existing,
+        };
+      })
+    );
+    
+    return dueSalaries.filter(r => r.netSalary > 0);
+  });
+
+
   handle('teacher-payroll:upsert', async (payload = {}) => {
     const teacherId = id(payload.teacherId, 'Teacher id');
     const monthYear = str(payload.monthYear, 'Month/year', { required: true, max: 20 });
     const totalDays = num(payload.totalDays, 'Total days', { min: 1, max: 366 });
     const presentDays = num(payload.presentDays, 'Present days', { min: 0, max: 366 });
+    const salary = num(payload.salary ?? 0, 'Salary', { min: 0 });
     const deductions = num(payload.deductions ?? 0, 'Deductions', { min: 0 });
     const bonus = num(payload.bonus ?? 0, 'Bonus', { min: 0 });
-    const status = oneOf(payload.status, ['Pending', 'Paid'], 'Pending');
+    const status = oneOf(payload.status, ['Paid', 'Unpaid'], 'Unpaid');
     const paymentDate = str(payload.paymentDate ?? '', 'Payment date', { max: 20 });
 
     await db.get('SELECT id FROM teachers WHERE id = ?', [teacherId]);
-    const baseSalary = (await db.get('SELECT baseSalary FROM teachers WHERE id = ?', [teacherId])).baseSalary;
-    const netSalary = round(baseSalary * presentDays / (totalDays || 1) - deductions + bonus, 2);
+    
+    // Calculate net salary: use provided salary if given, otherwise calculate from base salary
+    let netSalary;
+    if (salary > 0) {
+      netSalary = round(salary - deductions + bonus, 2);
+    } else {
+      const baseSalary = (await db.get('SELECT baseSalary FROM teachers WHERE id = ?', [teacherId])).baseSalary;
+      netSalary = round(baseSalary * presentDays / (totalDays || 1) - deductions + bonus, 2);
+    }
 
     await db.run(
-      `INSERT INTO teacher_payroll (teacherId, monthYear, totalDays, presentDays, deductions, bonus, netSalary, status, paymentDate)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO teacher_payroll (teacherId, monthYear, totalDays, presentDays, salary, deductions, bonus, netSalary, status, paymentDate)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(teacherId, monthYear) DO UPDATE SET
          totalDays = excluded.totalDays, presentDays = excluded.presentDays,
-         deductions = excluded.deductions, bonus = excluded.bonus,
+         salary = excluded.salary, deductions = excluded.deductions, bonus = excluded.bonus,
          netSalary = excluded.netSalary, status = excluded.status,
          paymentDate = excluded.paymentDate`,
-      [teacherId, monthYear, totalDays, presentDays, deductions, bonus, netSalary, status, paymentDate],
+      [teacherId, monthYear, totalDays, presentDays, salary, deductions, bonus, netSalary, status, paymentDate],
     );
     notify(ctx, 'teacher-payroll');
     return { teacherId, monthYear, netSalary };
+  });
+
+  handle('teacher-payroll:mark-paid', async ({ id: pid, paymentDate: pdate } = {}) => {
+    const payrollId = id(pid, 'Payroll id');
+    const paymentDate = str(pdate ?? new Date().toISOString().split('T')[0], 'Payment date', { max: 20 });
+    const row = await db.get('SELECT * FROM teacher_payroll WHERE id = ?', [payrollId]);
+    if (!row) throw new ValidationError('Payroll record not found');
+    await db.run(
+      'UPDATE teacher_payroll SET status = ?, paymentDate = ? WHERE id = ?',
+      ['Paid', paymentDate, payrollId]
+    );
+    notify(ctx, 'teacher-payroll');
+    return { id: payrollId, status: 'Paid', paymentDate };
   });
 
   handle('teacher-payroll:remove', async ({ id: pid } = {}) => {
@@ -1578,6 +1649,23 @@ function registerIpcHandlers(ctx) {
     await db.run('DELETE FROM teacher_payroll WHERE id = ?', [payrollId]);
     notify(ctx, 'teacher-payroll');
     return { deleted: true };
+  });
+
+  handle('teacher-payroll:get', async ({ id: pid } = {}) => {
+    const payrollId = id(pid, 'Payroll id');
+    const payroll = await db.get(
+      'SELECT tp.* FROM teacher_payroll tp WHERE tp.id = ?',
+      [payrollId]
+    );
+    if (!payroll) throw new ValidationError('Payroll record not found');
+    
+    const teacher = await db.get(
+      'SELECT * FROM teachers WHERE id = ?',
+      [payroll.teacherId]
+    );
+    if (!teacher) throw new ValidationError('Teacher not found');
+    
+    return { payroll, teacher };
   });
 
   handle('teacher-attendance:bulk-update', async ({ date, updates } = {}) => {

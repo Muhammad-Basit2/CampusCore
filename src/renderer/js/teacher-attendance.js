@@ -106,9 +106,6 @@ const TeacherAttendance = {
           </div>
         </div>
       </div>`;
-          ${placeholderCount ? `<p class="muted small">⚠ ${placeholderCount} placeholder row(s) — mark attendance to save.</p>` : ''}
-        </div>
-      </div>`;
 
     this.bind(view);
     this.bindKeys();
@@ -168,7 +165,6 @@ const TeacherAttendance = {
       
       calendarHTML += `<div class="${classes}" data-date="${dateStr}">${day}</div>`;
     }
-    
     calendarHTML += `
         </div>
       </div>`;

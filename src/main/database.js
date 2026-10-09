@@ -211,6 +211,7 @@ CREATE INDEX IF NOT EXISTS idx_ta_date   ON teacher_attendance(date);
    monthYear   TEXT    NOT NULL,
    totalDays   INTEGER NOT NULL DEFAULT 0,
    presentDays INTEGER NOT NULL DEFAULT 0,
+   salary      REAL    NOT NULL DEFAULT 0,
    deductions  REAL    NOT NULL DEFAULT 0,
    bonus       REAL    NOT NULL DEFAULT 0,
    netSalary   REAL    NOT NULL DEFAULT 0,
@@ -342,6 +343,7 @@ async function initDatabase() {
   await migrateTeacherAttendanceRemoveClassId();
   await migrateTeacherAttendanceClassId();
   await migrateAttendanceLeaveStatus();
+  await migrateTeacherPayrollSalary();
   await seedDefaults();
   // Rows that still carry no explicit assignment (the seeded defaults on a fresh
   // database, legacy rows on an existing one) are attached to every class, so
@@ -830,6 +832,20 @@ async function attachUnassignedSubjects() {
   }
   await refreshSubjectClassColumns();
   return true;
+}
+
+/**
+ * Migration: add salary column to teacher_payroll table.
+ * 
+ * Allows manual salary entry in addition to calculated attendance-based salaries.
+ * When salary > 0, uses it directly; otherwise falls back to baseSalary calculation.
+ */
+async function migrateTeacherPayrollSalary() {
+  const cols = await all('PRAGMA table_info(teacher_payroll)');
+  if (!cols.length) return; // table doesn't exist yet (fresh DB)
+  if (cols.some((c) => c.name === 'salary')) return; // already migrated
+
+  await run('ALTER TABLE teacher_payroll ADD COLUMN salary REAL NOT NULL DEFAULT 0');
 }
 
 /**
