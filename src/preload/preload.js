@@ -99,6 +99,11 @@ const api = {
     setAttendanceWeight: (weight) => invoke('settings:attendance-weight', { attendanceWeight: weight }),
   },
 
+  /* ---------------- WhatsApp alerts ---------------- */
+  whatsapp: {
+    send: (payload) => invoke('send-whatsapp', payload),
+  },
+
   /* ---------------- dashboard ---------------- */
   dashboard: {
     stats: () => invoke('dashboard:stats'),
@@ -127,6 +132,8 @@ const api = {
     exportClassesSubjects: () => invoke('data:export-classes-subjects'),
     importStudentsDialog: () => invoke('data:import-students-dialog'),
     importMarksDialog: (examName) => invoke('data:import-marks-dialog', { examName }),
+    exportAll: () => invoke('data:export-all'),
+    importAll: () => invoke('data:import-all'),
   },
 
   /* ---------------- push events from main ---------------- */

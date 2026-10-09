@@ -105,7 +105,14 @@ const Nav = {
    * not only in the view) is what stops a first click landing on an empty tree.
    */
   async openGrades() {
-    this.toggleTree(true);
+    // When already on the Grades view, clicking the header toggles the tree
+    // open/closed. From any other view it opens the tree as before.
+    if (this.current === 'grades') {
+      this.toggleTree();
+      if (!this.treeOpen) return;
+    } else {
+      this.toggleTree(true);
+    }
     await this.buildTree();
     // A class that is already selected keeps its scope; otherwise the view
     // falls back to its "pick a class" landing page.

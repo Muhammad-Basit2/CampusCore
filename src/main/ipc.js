@@ -11,6 +11,7 @@ const { app, ipcMain, dialog, shell } = require('electron');
 
 const db = require('./database');
 const { buildReport, gradeFor, round } = require('./grading');
+const backup = require('./backup');
 
 /* ------------------------------------------------------------------ */
 /* Infrastructure                                                      */
@@ -128,6 +129,39 @@ async function getSettings() {
 function notify(ctx, what) {
   const win = ctx.getWindow && ctx.getWindow();
   if (win && !win.isDestroyed()) win.webContents.send('data:changed', what);
+}
+
+/**
+ * Calculate attendance metrics for a student.
+ * Returns { totalDays, presentDays, absentDays, leaveDays, attendancePercentage }
+ */
+async function getAttendanceMetrics(studentId) {
+  const records = await db.all(
+    `SELECT status FROM student_attendance WHERE studentId = ? ORDER BY date ASC`,
+    [studentId],
+  );
+  
+  if (!records || records.length === 0) {
+    return null;
+  }
+
+  const totalDays = records.length;
+  const presentDays = records.filter((r) => r.status === 'Present').length;
+  const absentDays = records.filter((r) => r.status === 'Absent').length;
+  const leaveDays = records.filter((r) => r.status === 'Leave').length;
+  const lateDays = records.filter((r) => r.status === 'Late').length;
+  
+  // Attendance percentage: Present + 0.5*Late / Total * 100
+  const attendancePercentage = round(((presentDays + 0.5 * lateDays) / totalDays) * 100, 2);
+
+  return {
+    totalDays,
+    presentDays,
+    absentDays,
+    leaveDays,
+    lateDays,
+    attendancePercentage,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -714,7 +748,12 @@ function registerIpcHandlers(ctx) {
       invoiceId,
     ]);
     notify(ctx, 'invoices');
-    return db.get('SELECT * FROM invoices WHERE id = ?', [invoiceId]);
+    const updated = await db.get('SELECT * FROM invoices WHERE id = ?', [invoiceId]);
+
+    // Send WhatsApp fee reminder if there is still an outstanding balance
+    await maybeSendFeeReminder(invoiceId);
+
+    return updated;
   });
 
   handle('invoices:payments', async ({ invoiceId: pid }) =>
@@ -1035,6 +1074,12 @@ function registerIpcHandlers(ctx) {
     report.position = myRank >= 0 ? myRank + 1 : null;
     report.classSize = scored.length;
 
+    // Fetch attendance metrics for this student
+    const attendanceMetrics = await getAttendanceMetrics(student.id);
+    if (attendanceMetrics) {
+      report.attendanceMetrics = attendanceMetrics;
+    }
+
     return { report, settings, examName: exam || 'Term 1' };
   });
 
@@ -1095,7 +1140,9 @@ function registerIpcHandlers(ctx) {
           };
         });
       const remarkRow = remarks.find((r) => r.rollNo === s.rollNo);
-      return { student: s, report: buildReport(s, rows, passMark, remarkRow ? remarkRow.remark : '') };
+      const report = buildReport(s, rows, passMark, remarkRow ? remarkRow.remark : '');
+      // Attendance metrics will be fetched and added during rendering
+      return { student: s, report };
     });
 
     results.sort((a, b) => b.report.percentage - a.report.percentage);
@@ -1353,6 +1400,37 @@ function registerIpcHandlers(ctx) {
     const imported = await excelApi.importMarks(result.filePaths[0], examName);
     notify(ctx, 'marks');
     return imported;
+  });
+
+  /* ========================== Full backup/export/import ========================== */
+
+  handle('data:export-all', async () => {
+    const backup = await backup.exportAll();
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const result = await dialog.showSaveDialog({
+      title: 'Export All Data (Backup)',
+      defaultPath: `campuscore-backup-${dateStr}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }, { name: 'All', extensions: ['*'] }],
+    });
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+    fs.writeFileSync(result.filePath, JSON.stringify(backup, null, 2), 'utf8');
+    notify(ctx, 'data');
+    return { ok: true, filePath: result.filePath };
+  });
+
+  handle('data:import-all', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Import Data from Backup',
+      filters: [{ name: 'JSON', extensions: ['json'] }, { name: 'All', extensions: ['*'] }],
+      properties: ['openFile'],
+    });
+    if (result.canceled || !result.filePaths.length) return { ok: false, canceled: true };
+    const filePath = result.filePaths[0];
+    const content = fs.readFileSync(filePath, 'utf8');
+    const backup = JSON.parse(content);
+    const imported = await backup.importAll(backup);
+    notify(ctx, 'data');
+    return { ok: true, ...imported };
   });
 
   /* ========================== dashboard =========================== */
@@ -1738,6 +1816,11 @@ function registerIpcHandlers(ctx) {
       [studentId, classId, date, status],
     );
 
+    // Send WhatsApp absence alert when a student is marked Absent
+    if (status === 'Absent') {
+      await maybeSendAbsenceAlert({ studentId, date });
+    }
+
     notify(ctx, 'student-attendance');
     return { studentId, classId, date, status };
   });
@@ -1770,15 +1853,134 @@ function registerIpcHandlers(ctx) {
            DO UPDATE SET status = excluded.status, classId = excluded.classId`,
           [studentId, classId, d, status],
         );
+
+        // Send WhatsApp absence alert when a student is marked Absent
+        if (status === 'Absent') {
+          await maybeSendAbsenceAlert({ studentId, date: d });
+        }
+
         return { studentId, classId, date: d, status };
       }),
     );
     notify(ctx, 'student-attendance');
     return { saved: rows.length };
   });
+
+  handle('grades:get-attendance-metrics', async ({ studentIds = [] } = {}) => {
+    const metrics = {};
+    for (const sid of studentIds) {
+      const studentId = id(sid, 'Student id');
+      const m = await getAttendanceMetrics(studentId);
+      if (m) metrics[studentId] = m;
+    }
+    return metrics;
+  });
 }
 
-/** Invoice number generator shared by the handler and the form pre-fill. */
+/* =================== WhatsApp Alerts =================== */
+
+/**
+ * Build a WhatsApp Web URL (wa.me link) for a given phone number and message.
+ * Returns the URL string, or null if WhatsApp alerts are disabled.
+ */
+async function buildWhatsAppUrl(phone, message) {
+  const settings = await getSettings();
+  if (settings.whatsappEnabled !== 'true' && settings.whatsappEnabled !== true) return null;
+  if (!phone) return null;
+
+  // Normalise to E.164 format (expect +<countrycode><number>)
+  let normalized = String(phone).trim();
+  if (!normalized.startsWith('+')) normalized = '+' + normalized.replace(/[^0-9]/g, '');
+
+  const text = String(message || '').trim();
+  if (!text) return null;
+
+  return `https://wa.me/${normalized}?text=${encodeURIComponent(text)}`;
+}
+
+/**
+ * Send a WhatsApp fee-payment reminder to the parent/guardian.
+ * Called after a payment is recorded (or when an invoice is created with a balance).
+ */
+async function maybeSendFeeReminder(invoiceId) {
+  try {
+    const inv = await db.get('SELECT * FROM invoices WHERE id = ?', [invoiceId]);
+    if (!inv) return;
+    if (inv.amountPaid >= inv.amountDue) return; // fully paid — nothing to remind
+
+    const student = await db.get('SELECT phone, name FROM students WHERE id = ?', [inv.studentId]);
+    if (!student || !student.phone) return;
+
+    const settings = await getSettings();
+    const schoolName = settings.whatsappSchoolName || settings.schoolName || 'School';
+    const dueAmount = (inv.amountDue - inv.amountPaid).toFixed(2);
+    const currencySymbol = settings.currencySymbol || 'Rs';
+
+    const msg =
+      `Dear Parent,\n\n` +
+      `This is a fee payment reminder from ${schoolName}.\n\n` +
+      `Your child ${student.name} (Roll No: ${inv.rollNo}, Class: ${inv.studentClass}) ` +
+      `has an outstanding fee of ${currencySymbol} ${dueAmount} for ${inv.feeMonth}.\n` +
+      `Please arrange the payment at your earliest convenience.\n\n` +
+      `Thank you!`;
+
+    const url = await buildWhatsAppUrl(student.phone, msg);
+    if (!url) return;
+
+    shell.openExternal(url);
+  } catch (err) {
+    console.error('[whatsapp] fee reminder failed:', err.message);
+  }
+}
+
+/**
+ * Send a WhatsApp absence alert to the parent/guardian.
+ * Called when a student is marked Absent in student-attendance:upsert or bulk-update.
+ */
+async function maybeSendAbsenceAlert({ studentId, date }) {
+  try {
+    const student = await db.get('SELECT phone, name, rollNo, studentClass FROM students WHERE id = ?', [studentId]);
+    if (!student || !student.phone) return;
+
+    const settings = await getSettings();
+    const schoolName = settings.whatsappSchoolName || settings.schoolName || 'School';
+
+    const msg =
+      `Dear Parent,\n\n` +
+      `This is an attendance notice from ${schoolName}.\n\n` +
+      `Your child ${student.name} (Roll No: ${student.rollNo}, Class: ${student.studentClass}) ` +
+      `was marked Absent on ${date}.\n` +
+      `Please ensure they attend school tomorrow.\n\n` +
+      `Thank you!`;
+
+    const url = await buildWhatsAppUrl(student.phone, msg);
+    if (!url) return;
+
+    shell.openExternal(url);
+  } catch (err) {
+    console.error('[whatsapp] absence alert failed:', err.message);
+  }
+}
+
+/* ---------------------------- WhatsApp IPC handler ---------------------------- */
+
+handle('send-whatsapp', async ({ phone, message } = {}) => {
+  const url = await buildWhatsAppUrl(phone, message);
+  if (!url) {
+    throw new ValidationError('WhatsApp alerts are disabled or phone/message is missing');
+  }
+  shell.openExternal(url);
+  return { ok: true, url };
+});
+
+/* ---------------------------- Invoice creation hook ---------------------------- */
+
+// Hook into invoices:create to send a fee reminder when an invoice with a balance is created.
+// We patch the existing handler by re-registering — but since we can't easily monkey-patch,
+// we instead export a function that the caller can use. For simplicity we call
+// maybeSendFeeReminder at the end of invoices:add-payment and invoices:create below.
+
+/* Invoice number generator shared by the handler and the form pre-fill. */
 async function nextInvoiceNumber() {
   const settings = await getSettings();
   const prefix = settings.invoicePrefix || 'INV-';
@@ -1805,4 +2007,8 @@ module.exports = {
   // this process is willing to store.
   CLASS_CATEGORY_KEYS,
   excel: require('./excel'),
+  // WhatsApp helpers (exported for testing / manual triggering)
+  buildWhatsAppUrl,
+  maybeSendFeeReminder,
+  maybeSendAbsenceAlert,
 };

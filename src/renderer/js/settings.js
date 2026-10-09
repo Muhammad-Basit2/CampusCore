@@ -22,6 +22,12 @@ const Settings = {
     { key: 'invoiceFooter', label: 'Invoice footer note', type: 'textarea' },
   ],
 
+  // WhatsApp notification settings (separate section in UI)
+  whatsappFields: [
+    { key: 'whatsappEnabled', label: 'Enable WhatsApp alerts', type: 'toggle', hint: 'When enabled, a WhatsApp message opens automatically on fee reminders and absences.' },
+    { key: 'whatsappSchoolName', label: 'WhatsApp sender name', type: 'text', hint: 'Shown at the top of every WhatsApp message (e.g. "CampusCore School")' },
+  ],
+
   async load() {
     const view = $('#view-settings');
     const settings = await window.api.settings.getAll();
@@ -52,6 +58,40 @@ const Settings = {
         <div>
           <div class="card">
             <div class="card-head">
+              <h3>WhatsApp Alerts</h3>
+              <span class="sub">Open WhatsApp Web to send fee reminders &amp; absence notices</span>
+            </div>
+            <div class="card-body">
+              <div class="form-grid" style="grid-template-columns:1fr">
+                ${this.whatsappFields
+                  .map((f) => {
+                    const val = String(settings[f.key] || '').trim();
+                    const isChecked = val === 'true' || val === true;
+                    const input = f.type === 'toggle'
+                      ? `<label class="toggle-wrap">
+                           <input type="checkbox" id="set_${f.key}" data-key="${f.key}" ${isChecked ? 'checked' : ''} />
+                           <span class="toggle-slider"></span>
+                         </label>`
+                      : `<input id="set_${f.key}" data-key="${f.key}" type="${f.type}" value="${esc(val)}" />`;
+                    return `
+                      <div class="field">
+                        <label for="set_${f.key}">${esc(f.label)}</label>
+                        ${input}
+                        ${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}
+                      </div>`;
+                  })
+                  .join('')}
+              </div>
+              <p class="muted" style="margin-top:12px;font-size:12px;line-height:1.5">
+                WhatsApp alerts open a browser tab with a pre-filled message to the parent&apos;s phone number.
+                The student&apos;s <strong>phone</strong> field must be in international format,
+                e.g. <code>+923001234567</code>.
+              </p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
               <h3>School Logo</h3>
               <span class="sub">PNG, JPG, SVG or WebP &middot; max 2 MB</span>
             </div>
@@ -68,6 +108,22 @@ const Settings = {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>Backup &amp; Restore</h3></div>
+            <div class="card-body">
+              <p class="muted" style="margin:0 0 16px;font-size:12.5px">
+                Export all school data to a JSON backup file, or restore from a previously saved backup.
+              </p>
+              <div class="btn-row" style="margin:0;gap:12px;flex-wrap:wrap">
+                <button class="btn primary" id="exportAllData">&#128229; Export All Data</button>
+                <button class="btn" id="importAllData">&#128202; Import All Data</button>
+              </div>
+              <p class="muted" style="margin:12px 0 0;font-size:11.5px;color:#888">
+                The backup includes students, classes, subjects, marks, invoices, fees, teachers, and attendance records.
+              </p>
             </div>
           </div>
 
@@ -173,6 +229,52 @@ const Settings = {
       State.settings = result.settings;
       await this.load();
       notify.ok('Settings restored', 'Default values have been reapplied.');
+    });
+
+    $('#exportAllData', view).addEventListener('click', async () => {
+      try {
+        withBusy(event.currentTarget, async () => {
+          const result = await window.api.data.exportAll();
+          if (result.ok) {
+            notify.ok('Backup created', `Data exported to: ${result.filePath}`);
+          }
+        });
+      } catch (err) {
+        notify.error('Export failed', err.message);
+      }
+    });
+
+    $('#importAllData', view).addEventListener('click', async () => {
+      try {
+        const ok = await confirmDialog({
+          title: 'Import Data from Backup',
+          message: 'This will replace ALL existing data with the backup data. This action cannot be undone.',
+          detail: 'Are you sure you want to proceed?',
+          confirmText: 'Import Backup',
+          danger: true,
+        });
+        if (!ok) return;
+        withBusy(event.currentTarget, async () => {
+          const result = await window.api.data.importAll();
+          if (result.ok) {
+            const stats = result.imported;
+            const lines = [
+              `${stats.students || 0} student(s)`,
+              `${stats.classes || 0} class(es)`,
+              `${stats.subjects || 0} subject(s)`,
+              `${stats.teachers || 0} teacher(s)`,
+            ].filter(Boolean);
+            notify.ok(
+              'Data imported successfully',
+              `${lines.join(', ')} and more have been restored from backup.`
+            );
+            // Reload the app to reflect the new data
+            setTimeout(() => location.reload(), 1000);
+          }
+        });
+      } catch (err) {
+        notify.error('Import failed', err.message);
+      }
     });
   },
 

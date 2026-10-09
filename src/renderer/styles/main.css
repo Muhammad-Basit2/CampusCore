@@ -115,6 +115,43 @@ table.res-table th.num { text-align: right; }
 table.res-table td.res-fail { color: #fca5a5; font-weight: 600; }
 table.res-table td.muted { color: var(--muted); }
 
+/* Attendance columns in results table */
+table.res-table th[num]:last-of-type,
+table.res-table td.num.attendance-percent,
+table.res-table td.num.attendance-present {
+  background: rgba(15, 118, 110, 0.15);
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+/* Header for new attendance columns */
+table.res-table th.num::after[content*="Attendance"] {
+  content: "Attendance %";
+  background: #0f766e;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-left: 4px;
+}
+
+/* Present/Days column header */
+table.res-table th.num::after[content*="Present"] {
+  content: "Present / Total";
+  background: #0d4f4c;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-left: 4px;
+}
+
 /* ============================ CLASS SCOPE ============================= */
 /* The class dropdown this replaced has moved into the sidebar tree, so the
    toolbar only restates the active class as a read-only scope indicator. */
@@ -1464,6 +1501,49 @@ td.actions { text-align: right; white-space: nowrap; }
   color: #b91c1c;
 }
 
+/* Toggle switch styles for WhatsApp settings */
+.toggle-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.toggle-wrap input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-slider {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background: var(--line);
+  border-radius: 12px;
+  transition: background 0.2s;
+}
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: var(--text);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  transition: transform 0.2s;
+}
+.toggle-wrap input:checked + .toggle-slider {
+  background: var(--brand);
+}
+.toggle-wrap input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+}
+.toggle-wrap:hover .toggle-slider {
+  opacity: 0.9;
+}
+
 /* Footer text */
 .paper.a4 .footer-text {
   margin-top: 24px;
@@ -1475,3 +1555,23 @@ td.actions { text-align: right; white-space: nowrap; }
   line-height: 1.6;
 }
 
+
+/* WhatsApp button */
+.btn.whatsapp-btn {
+  background: #25D366;
+  color: #fff;
+  border-color: #25D366;
+}
+.btn.whatsapp-btn:hover {
+  background: #1ebe5d;
+  border-color: #1ebe5d;
+}
+.btn-sm.whatsapp-btn {
+  background: #25D366;
+  color: #fff;
+  border-color: #25D366;
+}
+.btn-sm.whatsapp-btn:hover {
+  background: #1ebe5d;
+  border-color: #1ebe5d;
+}

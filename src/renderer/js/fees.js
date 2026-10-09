@@ -132,6 +132,7 @@ const Fees = {
       <td class="num">${due > 0 ? `<span style="color:var(--warn)">${money(due)}</span>` : '<span class="muted">0.00</span>'}</td>
       <td>${statusBadge(r.status)}</td>
       <td class="actions no-print">
+        <button class="btn sm whatsapp-btn" data-act="whatsapp" data-id="${r.id}" title="Send WhatsApp reminder" ${due > 0 ? '' : 'disabled'}>WhatsApp</button>
         <button class="btn sm" data-act="pay" data-id="${r.id}">Pay</button>
         <button class="btn sm" data-act="a4" data-id="${r.id}">A4</button>
         <button class="btn sm" data-act="thermal" data-id="${r.id}">Receipt</button>
@@ -182,6 +183,19 @@ const Fees = {
           break;
         case 'delete':
           await this.remove(invoice);
+          break;
+        case 'whatsapp':
+          const student = await window.api.students.get(invoice.studentId);
+          if (student?.phone) {
+            const settings = await window.api.settings.getAll();
+            const schoolName = settings.whatsappSchoolName || settings.schoolName || 'School';
+            const dueAmount = Math.max((Number(invoice.amountDue) - Number(invoice.discount)) - Number(invoice.amountPaid), 0);
+            const currencySymbol = settings.currencySymbol || 'Rs';
+            const msg = `Dear Parent,\n\nFee reminder from ${schoolName}.\nStudent: ${invoice.studentName} (${invoice.studentClass})\nDue: ${currencySymbol} ${dueAmount.toFixed(2)} for ${invoice.feeMonth}\nPlease arrange payment at earliest convenience.`;
+            await window.api.whatsapp.send({ phone: student.phone, message: msg });
+          } else {
+            notify.warn('No phone', 'Student has no phone number in records.');
+          }
           break;
         default:
           break;

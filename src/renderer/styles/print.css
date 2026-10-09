@@ -328,8 +328,65 @@ table.doc-table tfoot td { background: #eff6ff; font-weight: 700; }
    between every pair of cards. */
 #printRoot[data-print="report"] .paper + .paper { page-break-before: always; }
 #printRoot[data-print="report"] .report-summary { page-break-inside: avoid; }
+#printRoot[data-print="report"] .attendance-summary { page-break-inside: avoid; }
 
 /* A card is sized to its content, never stretched, so it always fits one
    sheet. min-height:0 (set for print above) is what guarantees this. */
+
+/* Attendance summary panel - dark theme badge matching the app's style */
+.attendance-summary {
+  background: linear-gradient(135deg, #0f766e 0%, #0d4f4c 100%);
+  color: #fff;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 12px 0 16px;
+  box-shadow: 0 4px 12px rgba(15, 118, 110, 0.3);
+}
+
+.att-head {
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+  text-align: center;
+  color: #fff;
+}
+
+.att-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+.att-cell {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px 6px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.att-cell.att-percentage {
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.att-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+}
+
+.att-value {
+  font-size: 14px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.2;
+}
 
 

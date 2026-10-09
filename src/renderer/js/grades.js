@@ -1378,6 +1378,7 @@ const Grades = {
                   ${shown.map((s) => `<th class="num">${esc(s.name)}</th>`).join('')}
                   ${extraSubjects > 0 ? `<th class="num muted">+${extraSubjects}</th>` : ''}
                   <th class="num">Total</th><th class="num">%</th><th>Grade</th><th>Result</th>
+                  <th class="num">Attendance %</th><th class="num">Present / Days</th>
                   <th class="actions">Actions</th>
                 </tr>
               </thead>
@@ -1421,6 +1422,14 @@ const Grades = {
       })
       .join('');
 
+    const att = r.attendanceMetrics;
+    const attPercentageCell = att 
+      ? `<td class="num">${num(att.attendancePercentage)}%</td>`
+      : '<td class="num muted">-</td>';
+    const attPresentCell = att
+      ? `<td class="num">${num(att.presentDays)} / ${att.totalDays}</td>`
+      : '<td class="num muted">-</td>';
+
     return `<tr data-roll="${esc(r.rollNo)}">
       <td class="num">${r.position || '-'}</td>
       <td class="mono">${esc(r.rollNo)}</td>
@@ -1430,6 +1439,8 @@ const Grades = {
       <td class="num">${num(r.percentage)}%</td>
       <td>${gradePill(r.grade)}</td>
       <td>${badge(r.isPass ? 'Pass' : 'Fail', r.isPass ? 'ok' : 'danger')}</td>
+      ${attPercentageCell}
+      ${attPresentCell}
       <td class="actions no-print">
         <button class="btn sm" data-act="card" data-roll="${esc(r.rollNo)}">Report card</button>
         <button class="btn sm" data-act="remark" data-roll="${esc(r.rollNo)}">Remark</button>
@@ -1693,6 +1704,21 @@ function reportCard({ report, settings, examName }) {
     (r.isPass ? 'PASS' : 'FAIL') + '</div></div>' +
     '</div>';
 
+  // Attendance summary panel
+  const attMetrics = r.attendanceMetrics;
+  const attendance = attMetrics
+    ? '<div class="attendance-summary">' +
+      '<div class="att-head">Attendance Summary</div>' +
+      '<div class="att-grid">' +
+      '<div class="att-cell"><div class="att-label">Total Days</div><div class="att-value">' + attMetrics.totalDays + '</div></div>' +
+      '<div class="att-cell"><div class="att-label">Present</div><div class="att-value">' + attMetrics.presentDays + '</div></div>' +
+      '<div class="att-cell"><div class="att-label">Absent</div><div class="att-value">' + attMetrics.absentDays + '</div></div>' +
+      '<div class="att-cell"><div class="att-label">Leave</div><div class="att-value">' + attMetrics.leaveDays + '</div></div>' +
+      '<div class="att-cell att-percentage"><div class="att-label">Attendance %</div><div class="att-value">' + num(attMetrics.attendancePercentage) + '%</div></div>' +
+      '</div>' +
+      '</div>'
+    : '';
+
   const remark =
     '<div class="remark-box"><div class="l">Remark</div><div class="t">' + esc(r.remark || '') + '</div></div>';
 
@@ -1703,7 +1729,7 @@ function reportCard({ report, settings, examName }) {
     '<div class="sign"><div class="line">' + (esc(s.principalName) || 'Principal') + '</div></div>' +
     '</div>';
 
-  return '<div class="paper">' + head + heading + info + table + summary + remark + signs +
+  return '<div class="paper">' + head + heading + info + table + summary + attendance + remark + signs +
     '<div class="grade-legend">Grading: A+ 90%+ &middot; A 80%+ &middot; B 70%+ &middot; C 60%+ &middot; ' +
     'D 50%+ &middot; Fail below ' + esc(r.passMark) + '%</div>' +
     '</div>';

@@ -55,6 +55,8 @@ const DEFAULT_SETTINGS = {
   invoicePrefix: 'INV-',
   invoiceFooter: 'Thank you for your payment. Please keep this invoice safe.',
   passMarkPercentage: '50',
+  whatsappEnabled: 'true',
+  whatsappSchoolName: 'CampusCore School',
 };
 
 const SCHEMA = `

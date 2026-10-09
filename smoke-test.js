@@ -951,6 +951,7 @@ section('IPC channel registry', (ctx) => {
     'grades:get-report',
     'grades:get-results',
     'grades:save-remark',
+    'grades:get-attendance-metrics',
     'settings:get-all',
     'settings:save',
     'settings:reset',
@@ -971,6 +972,8 @@ section('IPC channel registry', (ctx) => {
     'data:import-students-dialog',
     'data:import-marks',
     'data:import-marks-dialog',
+    'data:export-all',
+    'data:import-all',
     'student-attendance:list',
     'student-attendance:upsert',
     'student-attendance:bulk-update',
@@ -986,6 +989,9 @@ section('IPC channel registry', (ctx) => {
     'teacher-attendance:remove',
     'teacher-payroll:list',
     'teacher-payroll:upsert',
+    'teacher-payroll:mark-paid',
+    'teacher-payroll:get',
+    'teacher-payroll:due-salaries',
     'teacher-payroll:remove',
   ];
   for (const channel of expected) {

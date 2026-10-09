@@ -228,6 +228,7 @@ const StudentAttendance = {
           </label>
         </td>
         <td>
+          <button class="btn-sm whatsapp-btn" data-student-id="${r.studentId}" data-status="${status}" title="Send WhatsApp alert" ${status === 'Absent' ? '' : 'disabled'}>WhatsApp</button>
           <button class="btn-note" data-student-id="${r.studentId}" title="${r.note || 'Add note'}">Note</button>
         </td>
       </tr>`;
@@ -313,6 +314,28 @@ const StudentAttendance = {
       await this.toggleAttendance(studentId, status);
     });
     
+    // WhatsApp button (absence alert)
+    delegateOnce(reg, view, 'click', '.whatsapp-btn', async (e, btn) => {
+      const studentId = Number(btn.dataset.studentId);
+      const status = btn.dataset.status;
+      if (status !== 'Absent') return;
+
+      const student = this.rows.find(r => r.studentId === studentId);
+      if (!student) return;
+
+      const parent = this.students.find(s => s.id === studentId);
+      if (!parent?.phone) {
+        notify.warn('No phone', 'Student has no phone number in records.');
+        return;
+      }
+
+      const settings = await window.api.settings.getAll();
+      const schoolName = settings.whatsappSchoolName || settings.schoolName || 'School';
+      const msg = `Dear Parent,\n\nAttendance notice from ${schoolName}.\nYour child ${parent.name} was marked Absent on ${this.currentDate}.\nPlease ensure they attend school tomorrow.`;
+
+      await window.api.whatsapp.send({ phone: parent.phone, message: msg });
+    });
+
     // Note button
     delegateOnce(reg, view, 'click', '.btn-note', async (e, btn) => {
       const studentId = Number(btn.dataset.studentId);
@@ -379,6 +402,7 @@ const StudentAttendance = {
           </label>
         </td>
         <td>
+          <button class="btn-sm whatsapp-btn" data-student-id="${r.studentId}" data-status="${status}" title="Send WhatsApp alert" ${status === 'Absent' ? '' : 'disabled'}>WhatsApp</button>
           <button class="btn-note" data-student-id="${r.studentId}" title="${r.note || 'Add note'}">Note</button>
         </td>
       </tr>`;
