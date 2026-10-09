@@ -1405,7 +1405,7 @@ function registerIpcHandlers(ctx) {
   /* ========================== Full backup/export/import ========================== */
 
   handle('data:export-all', async () => {
-    const backup = await backup.exportAll();
+    const exportBackup = await backup.exportAll();
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const result = await dialog.showSaveDialog({
       title: 'Export All Data (Backup)',
@@ -1413,7 +1413,7 @@ function registerIpcHandlers(ctx) {
       filters: [{ name: 'JSON', extensions: ['json'] }, { name: 'All', extensions: ['*'] }],
     });
     if (result.canceled || !result.filePath) return { ok: false, canceled: true };
-    fs.writeFileSync(result.filePath, JSON.stringify(backup, null, 2), 'utf8');
+    fs.writeFileSync(result.filePath, JSON.stringify(exportBackup, null, 2), 'utf8');
     notify(ctx, 'data');
     return { ok: true, filePath: result.filePath };
   });
@@ -1427,8 +1427,8 @@ function registerIpcHandlers(ctx) {
     if (result.canceled || !result.filePaths.length) return { ok: false, canceled: true };
     const filePath = result.filePaths[0];
     const content = fs.readFileSync(filePath, 'utf8');
-    const backup = JSON.parse(content);
-    const imported = await backup.importAll(backup);
+    const importBackup = JSON.parse(content);
+    const imported = await backup.importAll(importBackup);
     notify(ctx, 'data');
     return { ok: true, ...imported };
   });
