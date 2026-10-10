@@ -1,1 +1,0 @@
-# Write teacher attendance JS

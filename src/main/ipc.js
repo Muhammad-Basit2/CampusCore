@@ -1636,7 +1636,7 @@ function registerIpcHandlers(ctx) {
         );
         
         if (existing) {
-          return { ...existing, ...teacher };
+          return { ...teacher, ...existing };
         }
         
         // Calculate from attendance

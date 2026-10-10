@@ -1,7 +1,7 @@
 {
   "name": "campuscore",
   "productName": "CampusCore",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "CampusCore - Offline-first School Management & Invoicing ERP (Electron + SQLite)",
   "main": "src/main/main.js",
   "author": "CampusCore <support@campuscore.local>",

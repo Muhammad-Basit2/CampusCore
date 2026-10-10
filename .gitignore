@@ -2,5 +2,7 @@ node_modules/
 dist/
 build/icon.png
 *.log
+*.txt
+.ui-test-userdata/
 .DS_Store
 Thumbs.db

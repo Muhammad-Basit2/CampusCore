@@ -113,7 +113,8 @@ const Payroll = {
       }
     });
     on(view, 'click', '.mark-paid', async (e) => {
-      const row = this.rows.find(r => r.id === Number(e.target.dataset.id));
+      const rawId = e.target.dataset.id;
+      const row = this.rows.find(r => String(r.id) === rawId);
       if (row && !row.id) {
         // New record - need to save first
         await this.saveAndPay(row);
